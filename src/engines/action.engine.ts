@@ -8,6 +8,16 @@ import { Entity } from '../simulation/types/entity.type';
 import { Event } from '../simulation/types/event.type';
 import { clamp } from './math.util';
 
+export interface LocalActionEffect {
+  temperatureDelta: number;
+  influenceDelta: number;
+}
+
+export interface SystemActionEffect {
+  eventIntensityDelta: number;
+  entityTemperatureDelta: number;
+}
+
 @Injectable()
 export class ActionEngine {
   decideEntityAction(
@@ -46,20 +56,64 @@ export class ActionEngine {
     return 'system_normal';
   }
 
-  applyLocalActionEffects(entity: Entity, mode: Mode): void {
-    if (mode === 'baseline') {
+  getLocalActionEffect(action: LocalAction): LocalActionEffect {
+    if (action === 'dampen') {
+      return {
+        temperatureDelta: -0.12,
+        influenceDelta: -0.1,
+      };
+    }
+
+    if (action === 'notify') {
+      return {
+        temperatureDelta: -0.05,
+        influenceDelta: 0,
+      };
+    }
+
+    return {
+      temperatureDelta: 0,
+      influenceDelta: 0,
+    };
+  }
+
+  getSystemActionEffect(systemAction: SystemAction): SystemActionEffect {
+    if (systemAction === 'rebalance_attention') {
+      return {
+        eventIntensityDelta: -0.05,
+        entityTemperatureDelta: 0,
+      };
+    }
+
+    if (systemAction === 'stabilize_system') {
+      return {
+        eventIntensityDelta: -0.1,
+        entityTemperatureDelta: -0.05,
+      };
+    }
+
+    return {
+      eventIntensityDelta: 0,
+      entityTemperatureDelta: 0,
+    };
+  }
+
+  applyLocalActionEffects(entity: Entity, mode: Mode, share = 1): void {
+    if (mode === 'baseline' || share <= 0) {
       return;
     }
 
-    if (entity.action === 'dampen') {
-      entity.temperature = clamp(entity.temperature - 0.12, 0, 1);
-      entity.influence = clamp(entity.influence - 0.1, 0, 1);
-      return;
-    }
-
-    if (entity.action === 'notify') {
-      entity.temperature = clamp(entity.temperature - 0.05, 0, 1);
-    }
+    const effect = this.getLocalActionEffect(entity.action);
+    entity.temperature = clamp(
+      entity.temperature + effect.temperatureDelta * share,
+      0,
+      1,
+    );
+    entity.influence = clamp(
+      entity.influence + effect.influenceDelta * share,
+      0,
+      1,
+    );
   }
 
   applySystemActionEffects(
@@ -67,23 +121,29 @@ export class ActionEngine {
     mode: Mode,
     entities: Entity[],
     activeEvent: Event | null,
+    share = 1,
   ): void {
-    if (mode === 'baseline') {
+    if (mode === 'baseline' || share <= 0) {
       return;
     }
 
-    if (systemAction === 'rebalance_attention' && activeEvent) {
-      activeEvent.intensity = clamp(activeEvent.intensity - 0.05, 0.1, 1);
-      return;
+    const effect = this.getSystemActionEffect(systemAction);
+
+    if (activeEvent && effect.eventIntensityDelta !== 0) {
+      activeEvent.intensity = clamp(
+        activeEvent.intensity + effect.eventIntensityDelta * share,
+        0.1,
+        1,
+      );
     }
 
-    if (systemAction === 'stabilize_system') {
-      if (activeEvent) {
-        activeEvent.intensity = clamp(activeEvent.intensity - 0.1, 0.1, 1);
-      }
-
+    if (effect.entityTemperatureDelta !== 0) {
       for (const entity of entities) {
-        entity.temperature = clamp(entity.temperature - 0.05, 0, 1);
+        entity.temperature = clamp(
+          entity.temperature + effect.entityTemperatureDelta * share,
+          0,
+          1,
+        );
       }
     }
   }

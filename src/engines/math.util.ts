@@ -47,17 +47,13 @@ export function weightedRandomPick<T extends string>(
   randomValue: number,
 ): T {
   if (options.length === 0) {
-    throw new Error(
-      'Для взвешенного случайного выбора нужен хотя бы один вариант',
-    );
+    throw new Error('Для взвешенного выбора нужен хотя бы один вариант');
   }
 
   const totalWeight = options.reduce((sum, option) => sum + option.weight, 0);
 
   if (totalWeight <= 0) {
-    throw new Error(
-      'Для взвешенного случайного выбора нужна положительная сумма весов',
-    );
+    throw new Error('Для взвешенного выбора нужна положительная сумма весов');
   }
 
   const threshold = clamp(randomValue, 0, 1) * totalWeight;

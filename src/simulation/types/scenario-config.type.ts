@@ -2,6 +2,7 @@ import { Event } from './event.type';
 
 export type State = string;
 export type EntitySegment = 'stable' | 'regular' | 'reactive';
+export type SimulationProfileKey = 'demo' | 'realistic';
 export type TransitionProbability = number;
 export type Transition = Record<State, TransitionProbability>;
 export type TransitionMatrix = Record<State, Transition>;
@@ -51,6 +52,62 @@ export interface FixedThresholdConfig {
   global: number;
 }
 
+export interface HotThresholdConfig {
+  system: number;
+  visual: number;
+}
+
+export interface EventLifecycleConfig {
+  enabled: boolean;
+  rampUpShare: number;
+  peakShare: number;
+  decayShare: number;
+  aftershockSteps: number;
+  aftershockIntensityMultiplier: number;
+  aftershockScopeMultiplier: number;
+  aftershockRelevanceMultiplier: number;
+}
+
+export interface DelayedEffectsConfig {
+  localImmediateShare: number;
+  localNextStepShare: number;
+  systemImmediateShare: number;
+  systemNextStepShare: number;
+  decayFactor: number;
+}
+
+export interface InertiaConfig {
+  stressMemoryDecay: number;
+  temperatureRecovery: number;
+  influenceRecovery: number;
+  cooldownSteps: number;
+}
+
+export interface SegmentDynamicsConfig {
+  sensitivityMultiplier: number;
+  recoveryFactor: number;
+  escalationBias: number;
+  transitionBias: number;
+}
+
+export interface SeededNoiseConfig {
+  influence: number;
+  temperature: number;
+  transition: number;
+}
+
+export interface SimulationProfile {
+  key: SimulationProfileKey;
+  label: string;
+  hotThresholds: HotThresholdConfig;
+  eventLifecycle: EventLifecycleConfig;
+  delayedEffects: DelayedEffectsConfig;
+  inertia: InertiaConfig;
+  segmentDynamics: Record<EntitySegment, SegmentDynamicsConfig>;
+  noise: SeededNoiseConfig;
+  stabilizedTerminal: boolean;
+}
+
 export interface Scenario {
   key: string;
   name: string;
@@ -70,6 +127,8 @@ export interface Scenario {
   chaosIndexWeights: ChaosIndexWeights;
   fixedThresholds: FixedThresholdConfig;
   adaptiveThresholds: AdaptiveThresholdConfig;
+  defaultProfile: SimulationProfileKey;
+  profiles: Record<SimulationProfileKey, SimulationProfile>;
 }
 
 export interface ScenarioListItem {

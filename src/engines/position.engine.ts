@@ -16,7 +16,11 @@ export class PositionEngine {
     );
   }
 
-  computeInfluence(entity: Entity, activeEvent: Event | null): number {
+  computeInfluence(
+    entity: Entity,
+    activeEvent: Event | null,
+    noise = 0,
+  ): number {
     if (!activeEvent) {
       return 0;
     }
@@ -33,7 +37,8 @@ export class PositionEngine {
         entity.relevance *
         activeEvent.relevance *
         activeEvent.scope) /
-        (1 + distance),
+        (1 + distance) +
+        noise,
       0,
       1,
     );
@@ -43,6 +48,7 @@ export class PositionEngine {
     entity: Entity,
     activeEvent: Event | null,
     influence: number,
+    sensitivityMultiplier = 1,
   ): { x: number; y: number } {
     if (!activeEvent) {
       return {
@@ -53,12 +59,20 @@ export class PositionEngine {
 
     return {
       x: clamp(
-        entity.x + entity.sensitivity * influence * (activeEvent.x - entity.x),
+        entity.x +
+          entity.sensitivity *
+            sensitivityMultiplier *
+            influence *
+            (activeEvent.x - entity.x),
         0,
         1,
       ),
       y: clamp(
-        entity.y + entity.sensitivity * influence * (activeEvent.y - entity.y),
+        entity.y +
+          entity.sensitivity *
+            sensitivityMultiplier *
+            influence *
+            (activeEvent.y - entity.y),
         0,
         1,
       ),

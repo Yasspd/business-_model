@@ -3,7 +3,7 @@ import { Scenario } from '../simulation/types/scenario-config.type';
 
 const defaultEvent: Event = {
   id: 'event-global-hype-wave',
-  name: 'Глобальная волна хайпа',
+  name: '\u0413\u043B\u043E\u0431\u0430\u043B\u044C\u043D\u0430\u044F \u0432\u043E\u043B\u043D\u0430 \u0445\u0430\u0439\u043F\u0430',
   type: 'trend',
   x: 0.85,
   y: 0.8,
@@ -18,7 +18,7 @@ const defaultEvent: Event = {
 
 export const DEFAULT_SCENARIO: Scenario = {
   key: 'global-chaos-mvp',
-  name: 'Глобальный хаос MVP',
+  name: '\u0413\u043B\u043E\u0431\u0430\u043B\u044C\u043D\u044B\u0439 \u0445\u0430\u043E\u0441 MVP',
   states: [
     'calm',
     'interested',
@@ -138,6 +138,123 @@ export const DEFAULT_SCENARIO: Scenario = {
     localMax: 0.95,
     globalMin: 0.4,
     globalMax: 0.95,
+  },
+  defaultProfile: 'demo',
+  profiles: {
+    demo: {
+      key: 'demo',
+      label: 'Demo',
+      hotThresholds: {
+        system: 0.7,
+        visual: 0.7,
+      },
+      eventLifecycle: {
+        enabled: false,
+        rampUpShare: 0.2,
+        peakShare: 0.2,
+        decayShare: 0.6,
+        aftershockSteps: 0,
+        aftershockIntensityMultiplier: 0,
+        aftershockScopeMultiplier: 0,
+        aftershockRelevanceMultiplier: 0,
+      },
+      delayedEffects: {
+        localImmediateShare: 1,
+        localNextStepShare: 0,
+        systemImmediateShare: 1,
+        systemNextStepShare: 0,
+        decayFactor: 1,
+      },
+      inertia: {
+        stressMemoryDecay: 1,
+        temperatureRecovery: 1,
+        influenceRecovery: 1,
+        cooldownSteps: 0,
+      },
+      segmentDynamics: {
+        stable: {
+          sensitivityMultiplier: 1,
+          recoveryFactor: 1.05,
+          escalationBias: -0.02,
+          transitionBias: 0.95,
+        },
+        regular: {
+          sensitivityMultiplier: 1,
+          recoveryFactor: 1,
+          escalationBias: 0,
+          transitionBias: 1,
+        },
+        reactive: {
+          sensitivityMultiplier: 1.05,
+          recoveryFactor: 0.95,
+          escalationBias: 0.03,
+          transitionBias: 1.05,
+        },
+      },
+      noise: {
+        influence: 0,
+        temperature: 0,
+        transition: 0,
+      },
+      stabilizedTerminal: true,
+    },
+    realistic: {
+      key: 'realistic',
+      label: 'Realistic',
+      hotThresholds: {
+        system: 0.7,
+        visual: 0.62,
+      },
+      eventLifecycle: {
+        enabled: true,
+        rampUpShare: 0.25,
+        peakShare: 0.25,
+        decayShare: 0.5,
+        aftershockSteps: 2,
+        aftershockIntensityMultiplier: 0.35,
+        aftershockScopeMultiplier: 0.55,
+        aftershockRelevanceMultiplier: 0.65,
+      },
+      delayedEffects: {
+        localImmediateShare: 0.65,
+        localNextStepShare: 0.35,
+        systemImmediateShare: 0.5,
+        systemNextStepShare: 0.5,
+        decayFactor: 0.6,
+      },
+      inertia: {
+        stressMemoryDecay: 0.78,
+        temperatureRecovery: 0.08,
+        influenceRecovery: 0.06,
+        cooldownSteps: 2,
+      },
+      segmentDynamics: {
+        stable: {
+          sensitivityMultiplier: 0.8,
+          recoveryFactor: 1.2,
+          escalationBias: -0.12,
+          transitionBias: 0.88,
+        },
+        regular: {
+          sensitivityMultiplier: 1,
+          recoveryFactor: 1,
+          escalationBias: 0,
+          transitionBias: 1,
+        },
+        reactive: {
+          sensitivityMultiplier: 1.18,
+          recoveryFactor: 0.82,
+          escalationBias: 0.16,
+          transitionBias: 1.12,
+        },
+      },
+      noise: {
+        influence: 0.025,
+        temperature: 0.02,
+        transition: 0.015,
+      },
+      stabilizedTerminal: true,
+    },
   },
 };
 

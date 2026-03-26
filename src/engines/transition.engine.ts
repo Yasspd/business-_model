@@ -4,6 +4,7 @@ import { RandomEngine } from './random.engine';
 import {
   RiskMap,
   State,
+  Transition,
   TransitionMatrix,
 } from '../simulation/types/scenario-config.type';
 
@@ -17,27 +18,25 @@ export class TransitionEngine {
       const transition = transitionMatrix[state];
 
       if (!transition) {
-        throw new Error(
-          `Отсутствует строка переходов для состояния "${state}"`,
-        );
+        throw new Error(`Missing transition row for state "${state}"`);
       }
 
       const entries = Object.entries(transition);
 
       if (entries.length === 0) {
-        throw new Error(`Строка переходов для состояния "${state}" пуста`);
+        throw new Error(`Transition row for state "${state}" is empty`);
       }
 
       for (const [nextState, probability] of entries) {
         if (!states.includes(nextState)) {
           throw new Error(
-            `Строка переходов "${state}" содержит неизвестное состояние "${nextState}"`,
+            `Transition row "${state}" contains unknown state "${nextState}"`,
           );
         }
 
         if (probability < 0 || probability > 1) {
           throw new Error(
-            `Вероятность перехода "${state}" -> "${nextState}" вне допустимого диапазона`,
+            `Transition probability "${state}" -> "${nextState}" is out of range`,
           );
         }
       }
@@ -49,12 +48,33 @@ export class TransitionEngine {
 
       if (Math.abs(probabilitySum - 1) > 1e-9) {
         throw new Error(
-          `Сумма вероятностей в строке переходов "${state}" должна быть равна 1, получено ${probabilitySum}`,
+          `Transition row "${state}" must sum to 1, received ${probabilitySum}`,
         );
       }
     }
 
     return true;
+  }
+
+  normalizeTransition(transition: Transition): Transition {
+    const normalizedEntries = Object.entries(transition).map(
+      ([state, probability]) => [state, Math.max(0, probability)] as const,
+    );
+    const totalProbability = normalizedEntries.reduce(
+      (sum, [, probability]) => sum + probability,
+      0,
+    );
+
+    if (totalProbability <= 0) {
+      throw new Error('Normalized transition requires positive total weight');
+    }
+
+    return Object.fromEntries(
+      normalizedEntries.map(([state, probability]) => [
+        state,
+        probability / totalProbability,
+      ]),
+    );
   }
 
   pickNextState(
@@ -65,13 +85,19 @@ export class TransitionEngine {
     const transition = transitionMatrix[currentState];
 
     if (!transition) {
-      throw new Error(
-        `Отсутствует строка переходов для состояния "${currentState}"`,
-      );
+      throw new Error(`Missing transition row for state "${currentState}"`);
     }
 
+    return this.pickNextStateFromTransition(transition, randomEngine);
+  }
+
+  pickNextStateFromTransition(
+    transition: Transition,
+    randomEngine: RandomEngine,
+  ): State {
+    const normalizedTransition = this.normalizeTransition(transition);
     const options: Array<WeightedOption<State>> = Object.entries(
-      transition,
+      normalizedTransition,
     ).map(([value, weight]) => ({
       value,
       weight,

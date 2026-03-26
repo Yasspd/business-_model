@@ -11,6 +11,8 @@ import {
 } from 'class-validator';
 import { ACTION_MODES } from '../types/action-mode.type';
 
+const SIMULATION_PROFILES = ['demo', 'realistic'] as const;
+
 class ActiveEventOverrideDto {
   @IsOptional()
   @Type(() => Number)
@@ -80,6 +82,10 @@ export class RunSimulationDto {
 
   @IsIn(ACTION_MODES)
   mode!: (typeof ACTION_MODES)[number];
+
+  @IsOptional()
+  @IsIn(SIMULATION_PROFILES)
+  profile?: (typeof SIMULATION_PROFILES)[number];
 
   @IsOptional()
   @Type(() => Number)

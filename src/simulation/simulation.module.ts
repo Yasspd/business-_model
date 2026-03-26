@@ -6,6 +6,7 @@ import { ScoringEngine } from '../engines/scoring.engine';
 import { ThresholdEngine } from '../engines/threshold.engine';
 import { ScenarioModule } from '../scenario/scenario.module';
 import { SimulationController } from './simulation.controller';
+import { SimulationRunStore } from './simulation-run.store';
 import { SimulationService } from './simulation.service';
 
 @Module({
@@ -16,6 +17,7 @@ import { SimulationService } from './simulation.service';
     MetricsEngine,
     PositionEngine,
     ScoringEngine,
+    SimulationRunStore,
     ThresholdEngine,
     SimulationService,
   ],

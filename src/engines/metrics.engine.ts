@@ -1,23 +1,57 @@
 import { Injectable } from '@nestjs/common';
-import { Mode, SystemAction } from '../simulation/types/action-mode.type';
 import { Entity } from '../simulation/types/entity.type';
-import { Event } from '../simulation/types/event.type';
+import { EventSnapshot } from '../simulation/types/event.type';
 import {
+  ActionsBreakdown,
   ChaosIndexBreakdown,
   SimulationStepItem,
   SimulationSummary,
 } from '../simulation/types/simulation-response.type';
+import { SystemAction } from '../simulation/types/action-mode.type';
 import { ChaosIndexWeights } from '../simulation/types/scenario-config.type';
 import { clamp, distance2D, mean } from './math.util';
 
 export interface StepMetricsSnapshot {
   avgTemperature: number;
+  avgInfluence: number;
   avgVelocity: number;
+  avgRiskScore: number;
+  avgFailureProbability: number;
   clusterDensity: number;
   hotShare: number;
+  hotEntities: number;
+  hotActiveEntities: number;
   failureProximity: number;
   chaosIndex: number;
+  maxTemperature: number;
   breakdown?: ChaosIndexBreakdown;
+}
+
+export interface BuildStepItemOptions {
+  step: number;
+  metrics: StepMetricsSnapshot;
+  globalThreshold: number;
+  systemAction: SystemAction;
+  activeEventIntensity: number;
+  eventSnapshot: EventSnapshot | null;
+  entities: Entity[];
+  activeEntities: Entity[];
+  finishedThisStep: number;
+  stabilizedThisStep: number;
+  failedThisStep: number;
+  cumulativeFinished: number;
+  cumulativeStabilized: number;
+  cumulativeFailed: number;
+}
+
+export interface BuildSummaryOptions {
+  entities: Entity[];
+  steps: SimulationStepItem[];
+  systemHotThreshold: number;
+  hotEntitiesTotal: number;
+  maxHotEntities: number;
+  maxTemperature: number;
+  actionTotals: ActionsBreakdown;
 }
 
 @Injectable()
@@ -26,16 +60,35 @@ export class MetricsEngine {
     return mean(entities.map((entity) => entity.temperature));
   }
 
+  computeAvgInfluence(entities: Entity[]): number {
+    return mean(entities.map((entity) => entity.influence));
+  }
+
   computeAvgVelocity(entities: Entity[]): number {
     return mean(entities.map((entity) => entity.velocity));
   }
 
+  computeAvgRiskScore(entities: Entity[]): number {
+    return mean(entities.map((entity) => entity.riskScore));
+  }
+
+  computeAvgFailureProbability(entities: Entity[]): number {
+    return mean(entities.map((entity) => entity.failureProbability));
+  }
+
+  computeMaxTemperature(entities: Entity[]): number {
+    return entities.reduce(
+      (maxTemperature, entity) => Math.max(maxTemperature, entity.temperature),
+      0,
+    );
+  }
+
   computeClusterDensity(
     entities: Entity[],
-    activeEvent: Event | null,
+    activeEvent: EventSnapshot | null,
     clusterRadius: number,
   ): number {
-    if (!activeEvent || entities.length === 0) {
+    if (!activeEvent?.isActive || entities.length === 0) {
       return 0;
     }
 
@@ -48,20 +101,23 @@ export class MetricsEngine {
     return clusterCount / entities.length;
   }
 
-  computeHotShare(entities: Entity[], hotTemperatureThreshold: number): number {
+  computeHotEntitiesCount(entities: Entity[], hotThreshold: number): number {
+    return entities.filter((entity) => entity.temperature >= hotThreshold)
+      .length;
+  }
+
+  computeHotShare(entities: Entity[], hotThreshold: number): number {
     if (entities.length === 0) {
       return 0;
     }
 
-    const hotCount = entities.filter(
-      (entity) => entity.temperature >= hotTemperatureThreshold,
-    ).length;
-
-    return hotCount / entities.length;
+    return (
+      this.computeHotEntitiesCount(entities, hotThreshold) / entities.length
+    );
   }
 
   computeFailureProximity(entities: Entity[]): number {
-    return mean(entities.map((entity) => entity.failureProbability));
+    return this.computeAvgFailureProbability(entities);
   }
 
   computeChaosIndex(
@@ -81,26 +137,36 @@ export class MetricsEngine {
 
   computeStepMetrics(
     entities: Entity[],
-    activeEvent: Event | null,
+    activeEntities: Entity[],
+    activeEvent: EventSnapshot | null,
     clusterRadius: number,
-    hotTemperatureThreshold: number,
+    systemHotThreshold: number,
     weights: ChaosIndexWeights,
-    mode: Mode,
+    includeBreakdown: boolean,
   ): StepMetricsSnapshot {
     const snapshot = {
       avgTemperature: this.computeAvgTemperature(entities),
+      avgInfluence: this.computeAvgInfluence(entities),
       avgVelocity: this.computeAvgVelocity(entities),
+      avgRiskScore: this.computeAvgRiskScore(entities),
+      avgFailureProbability: this.computeAvgFailureProbability(entities),
       clusterDensity: this.computeClusterDensity(
         entities,
         activeEvent,
         clusterRadius,
       ),
-      hotShare: this.computeHotShare(entities, hotTemperatureThreshold),
+      hotShare: this.computeHotShare(entities, systemHotThreshold),
+      hotEntities: this.computeHotEntitiesCount(entities, systemHotThreshold),
+      hotActiveEntities: this.computeHotEntitiesCount(
+        activeEntities,
+        systemHotThreshold,
+      ),
       failureProximity: this.computeFailureProximity(entities),
+      maxTemperature: this.computeMaxTemperature(entities),
     };
     const chaosIndex = this.computeChaosIndex(snapshot, weights);
 
-    if (mode !== 'hybrid') {
+    if (!includeBreakdown) {
       return {
         ...snapshot,
         chaosIndex,
@@ -136,71 +202,131 @@ export class MetricsEngine {
     }, {});
   }
 
-  computeActionDistribution(entities: Entity[]): Record<string, number> {
-    return entities.reduce<Record<string, number>>((distribution, entity) => {
-      distribution[entity.action] = (distribution[entity.action] ?? 0) + 1;
-      return distribution;
-    }, {});
+  buildActionsBreakdown(activeEntities: Entity[]): ActionsBreakdown {
+    const breakdown: ActionsBreakdown = {
+      watch: 0,
+      notify: 0,
+      dampen: 0,
+      total: 0,
+    };
+
+    for (const entity of activeEntities) {
+      if (entity.action === 'watch') {
+        breakdown.watch += 1;
+      } else if (entity.action === 'notify') {
+        breakdown.notify += 1;
+      } else if (entity.action === 'dampen') {
+        breakdown.dampen += 1;
+      }
+    }
+
+    breakdown.total = breakdown.watch + breakdown.notify + breakdown.dampen;
+
+    return breakdown;
   }
 
-  buildStepItem(
-    step: number,
-    metrics: StepMetricsSnapshot,
-    globalThreshold: number,
-    systemAction: SystemAction,
-    activeEventIntensity: number,
+  computeActionDistribution(
     entities: Entity[],
-  ): SimulationStepItem {
+    activeEntities: Entity[],
+  ): Record<string, number> {
+    const distribution: Record<string, number> = {
+      no_action: entities.length - activeEntities.length,
+    };
+
+    for (const entity of activeEntities) {
+      distribution[entity.action] = (distribution[entity.action] ?? 0) + 1;
+    }
+
+    return distribution;
+  }
+
+  buildStepItem(options: BuildStepItemOptions): SimulationStepItem {
+    const actionsBreakdown = this.buildActionsBreakdown(options.activeEntities);
+
     return {
-      step,
-      avgTemperature: metrics.avgTemperature,
-      avgVelocity: metrics.avgVelocity,
-      clusterDensity: metrics.clusterDensity,
-      hotShare: metrics.hotShare,
-      failureProximity: metrics.failureProximity,
-      chaosIndex: metrics.chaosIndex,
-      globalThreshold,
-      systemAction,
-      activeEventIntensity,
-      stateDistribution: this.computeStateDistribution(entities),
-      actionDistribution: this.computeActionDistribution(entities),
-      breakdown: metrics.breakdown,
+      step: options.step,
+      avgTemperature: options.metrics.avgTemperature,
+      avgInfluence: options.metrics.avgInfluence,
+      avgVelocity: options.metrics.avgVelocity,
+      avgRiskScore: options.metrics.avgRiskScore,
+      avgFailureProbability: options.metrics.avgFailureProbability,
+      clusterDensity: options.metrics.clusterDensity,
+      hotShare: options.metrics.hotShare,
+      failureProximity: options.metrics.failureProximity,
+      chaosIndex: options.metrics.chaosIndex,
+      globalThreshold: options.globalThreshold,
+      systemAction: options.systemAction,
+      activeEventIntensity: options.activeEventIntensity,
+      stateDistribution: this.computeStateDistribution(options.entities),
+      actionDistribution: this.computeActionDistribution(
+        options.entities,
+        options.activeEntities,
+      ),
+      actionsBreakdown,
+      finishedThisStep: options.finishedThisStep,
+      stabilizedThisStep: options.stabilizedThisStep,
+      failedThisStep: options.failedThisStep,
+      cumulativeFinished: options.cumulativeFinished,
+      cumulativeStabilized: options.cumulativeStabilized,
+      cumulativeFailed: options.cumulativeFailed,
+      eventSnapshot: options.eventSnapshot,
+      breakdown: options.metrics.breakdown,
     };
   }
 
-  buildFinalSummary(
-    entities: Entity[],
-    steps: SimulationStepItem[],
-    hotTemperatureThreshold: number,
-  ): SimulationSummary {
-    const totalEntities = entities.length;
-    const stabilizedCount = entities.filter(
+  buildFinalSummary(options: BuildSummaryOptions): SimulationSummary {
+    const totalEntities = options.entities.length;
+    const stabilizedCount = options.entities.filter(
       (entity) => entity.currentState === 'stabilized',
     ).length;
-    const failedCount = entities.filter(
+    const failedCount = options.entities.filter(
       (entity) => entity.currentState === 'failed',
     ).length;
-    const actionCount = entities.filter(
-      (entity) => entity.action !== 'no_action',
-    ).length;
-    const hotEntities = entities.filter(
-      (entity) => entity.temperature >= hotTemperatureThreshold,
-    ).length;
-    const lastStep = steps[steps.length - 1];
+    const hotEntities = this.computeHotEntitiesCount(
+      options.entities,
+      options.systemHotThreshold,
+    );
+    const hotActiveEntities = this.computeHotEntitiesCount(
+      options.entities.filter((entity) => !entity.isFinished),
+      options.systemHotThreshold,
+    );
+    const lastStep = options.steps[options.steps.length - 1];
+    const chaosValues = options.steps.map((step) => step.chaosIndex);
 
     return {
       totalEntities,
-      finishedEntities: entities.filter((entity) => entity.isFinished).length,
+      finishedEntities: options.entities.filter((entity) => entity.isFinished)
+        .length,
       stabilizedCount,
       failedCount,
-      actionCount,
+      actionCount: lastStep?.actionsBreakdown.total ?? 0,
+      actionCountTotal: options.actionTotals.total,
+      lastStepActionCount: lastStep?.actionsBreakdown.total ?? 0,
+      watchCountTotal: options.actionTotals.watch,
+      notifyCountTotal: options.actionTotals.notify,
+      dampenCountTotal: options.actionTotals.dampen,
+      lastStepActionsBreakdown: lastStep?.actionsBreakdown ?? {
+        watch: 0,
+        notify: 0,
+        dampen: 0,
+        total: 0,
+      },
       hotEntities,
+      hotEntitiesTotal: options.hotEntitiesTotal,
+      hotActiveEntities,
+      maxHotEntities: options.maxHotEntities,
+      maxTemperature: options.maxTemperature,
       conversionRate: totalEntities === 0 ? 0 : stabilizedCount / totalEntities,
       failureRate: totalEntities === 0 ? 0 : failedCount / totalEntities,
-      avgTemperature: this.computeAvgTemperature(entities),
-      avgRiskScore: mean(entities.map((entity) => entity.riskScore)),
-      avgFailureProbability: this.computeFailureProximity(entities),
+      avgTemperature: this.computeAvgTemperature(options.entities),
+      avgInfluence: this.computeAvgInfluence(options.entities),
+      avgRiskScore: this.computeAvgRiskScore(options.entities),
+      avgFailureProbability: this.computeAvgFailureProbability(
+        options.entities,
+      ),
       finalChaosIndex: lastStep?.chaosIndex ?? 0,
+      maxChaosIndex: chaosValues.length === 0 ? 0 : Math.max(...chaosValues),
+      avgChaosIndex: mean(chaosValues),
       finalGlobalThreshold: lastStep?.globalThreshold ?? 0,
       finalSystemAction: lastStep?.systemAction ?? 'system_normal',
     };
