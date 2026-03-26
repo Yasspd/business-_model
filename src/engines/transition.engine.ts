@@ -17,25 +17,27 @@ export class TransitionEngine {
       const transition = transitionMatrix[state];
 
       if (!transition) {
-        throw new Error(`Transition row for state "${state}" is missing`);
+        throw new Error(
+          `Отсутствует строка переходов для состояния "${state}"`,
+        );
       }
 
       const entries = Object.entries(transition);
 
       if (entries.length === 0) {
-        throw new Error(`Transition row for state "${state}" is empty`);
+        throw new Error(`Строка переходов для состояния "${state}" пуста`);
       }
 
       for (const [nextState, probability] of entries) {
         if (!states.includes(nextState)) {
           throw new Error(
-            `Transition row "${state}" contains unknown state "${nextState}"`,
+            `Строка переходов "${state}" содержит неизвестное состояние "${nextState}"`,
           );
         }
 
         if (probability < 0 || probability > 1) {
           throw new Error(
-            `Transition probability "${state}" -> "${nextState}" is out of range`,
+            `Вероятность перехода "${state}" -> "${nextState}" вне допустимого диапазона`,
           );
         }
       }
@@ -47,7 +49,7 @@ export class TransitionEngine {
 
       if (Math.abs(probabilitySum - 1) > 1e-9) {
         throw new Error(
-          `Transition row "${state}" must sum to 1, received ${probabilitySum}`,
+          `Сумма вероятностей в строке переходов "${state}" должна быть равна 1, получено ${probabilitySum}`,
         );
       }
     }
@@ -63,7 +65,9 @@ export class TransitionEngine {
     const transition = transitionMatrix[currentState];
 
     if (!transition) {
-      throw new Error(`Transition row for state "${currentState}" is missing`);
+      throw new Error(
+        `Отсутствует строка переходов для состояния "${currentState}"`,
+      );
     }
 
     const options: Array<WeightedOption<State>> = Object.entries(

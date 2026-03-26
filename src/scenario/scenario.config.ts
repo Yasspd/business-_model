@@ -3,7 +3,7 @@ import { Scenario } from '../simulation/types/scenario-config.type';
 
 const defaultEvent: Event = {
   id: 'event-global-hype-wave',
-  name: 'Global Hype Wave',
+  name: 'Глобальная волна хайпа',
   type: 'trend',
   x: 0.85,
   y: 0.8,
@@ -18,7 +18,7 @@ const defaultEvent: Event = {
 
 export const DEFAULT_SCENARIO: Scenario = {
   key: 'global-chaos-mvp',
-  name: 'Global Chaos MVP',
+  name: 'Глобальный хаос MVP',
   states: [
     'calm',
     'interested',

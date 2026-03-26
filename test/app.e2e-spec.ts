@@ -23,7 +23,7 @@ function isSimulationResponse(value: unknown): value is SimulationResponse {
   );
 }
 
-describe('SimulationController (e2e)', () => {
+describe('Контроллер симуляции (e2e)', () => {
   let app: INestApplication;
   let httpServer: Server;
 
@@ -48,19 +48,19 @@ describe('SimulationController (e2e)', () => {
     await app.close();
   });
 
-  it('/simulation/scenarios (GET)', () => {
+  it('GET /simulation/scenarios возвращает список сценариев', () => {
     return request(httpServer)
       .get('/simulation/scenarios')
       .expect(200)
       .expect([
         {
           key: 'global-chaos-mvp',
-          name: 'Global Chaos MVP',
+          name: 'Глобальный хаос MVP',
         },
       ]);
   });
 
-  it('/simulation/run (POST)', async () => {
+  it('POST /simulation/run запускает симуляцию', async () => {
     const response = await request(httpServer)
       .post('/simulation/run')
       .send({
@@ -78,7 +78,9 @@ describe('SimulationController (e2e)', () => {
     expect(isSimulationResponse(body)).toBe(true);
 
     if (!isSimulationResponse(body)) {
-      throw new Error('Response body is not a valid simulation response');
+      throw new Error(
+        'Тело ответа не соответствует формату SimulationResponse',
+      );
     }
 
     expect(body.scenarioKey).toBe('global-chaos-mvp');

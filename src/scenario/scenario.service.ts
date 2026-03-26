@@ -31,7 +31,7 @@ export class ScenarioService implements OnModuleInit {
     const scenario = this.scenarios.get(scenarioKey);
 
     if (!scenario) {
-      throw new NotFoundException(`Scenario "${scenarioKey}" was not found`);
+      throw new NotFoundException(`Сценарий "${scenarioKey}" не найден`);
     }
 
     return structuredClone(scenario);

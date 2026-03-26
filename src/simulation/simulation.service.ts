@@ -126,7 +126,9 @@ export class SimulationService {
         this.actionEngine.applyLocalActionEffects(entity, dto.mode);
       }
 
-      const stepMetrics = this.metricsEngine.computeStepMetrics(
+      this.refreshEntityRiskScores(entities, scenario);
+
+      const observedStepMetrics = this.metricsEngine.computeStepMetrics(
         entities,
         activeEvent,
         scenario.clusterRadius,
@@ -135,26 +137,15 @@ export class SimulationService {
         dto.mode,
       );
       const globalThreshold = this.thresholdEngine.computeGlobalThreshold(
-        [...chaosHistory, stepMetrics.chaosIndex],
+        [...chaosHistory, observedStepMetrics.chaosIndex],
         dto.mode,
         scenario.fixedThresholds,
         scenario.adaptiveThresholds,
       );
       const systemAction = this.actionEngine.decideSystemAction(
-        stepMetrics.chaosIndex,
+        observedStepMetrics.chaosIndex,
         globalThreshold,
       );
-      const stepItem = this.metricsEngine.buildStepItem(
-        step,
-        stepMetrics,
-        globalThreshold,
-        systemAction,
-        activeEventIntensity,
-        entities,
-      );
-
-      chaosHistory.push(stepMetrics.chaosIndex);
-      stepItems.push(stepItem);
 
       this.actionEngine.applySystemActionEffects(
         systemAction,
@@ -162,6 +153,27 @@ export class SimulationService {
         entities,
         activeEvent,
       );
+      this.refreshEntityRiskScores(entities, scenario);
+
+      const reportedStepMetrics = this.metricsEngine.computeStepMetrics(
+        entities,
+        activeEvent,
+        scenario.clusterRadius,
+        scenario.hotTemperatureThreshold,
+        scenario.chaosIndexWeights,
+        dto.mode,
+      );
+      const stepItem = this.metricsEngine.buildStepItem(
+        step,
+        reportedStepMetrics,
+        globalThreshold,
+        systemAction,
+        activeEventIntensity,
+        entities,
+      );
+
+      chaosHistory.push(reportedStepMetrics.chaosIndex);
+      stepItems.push(stepItem);
 
       for (const entity of entities) {
         entity.isFinished = scenario.terminalStates.includes(
@@ -361,5 +373,21 @@ export class SimulationService {
       action: 'no_action',
       isFinished: scenario.terminalStates.includes(preset.initialState),
     };
+  }
+
+  private refreshEntityRiskScores(
+    entities: Entity[],
+    scenario: Scenario,
+  ): void {
+    for (const entity of entities) {
+      entity.riskScore = this.scoringEngine.computeRiskScore(
+        entity.stateRisk,
+        entity.temperature,
+        entity.influence,
+        entity.velocity,
+        entity.failureProbability,
+        scenario.riskScoreWeights,
+      );
+    }
   }
 }
