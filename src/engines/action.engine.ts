@@ -10,9 +10,14 @@ import { clamp } from './math.util';
 
 @Injectable()
 export class ActionEngine {
-  decideEntityAction(entity: Pick<Entity, 'riskScore' | 'localThreshold' | 'currentState'>): LocalAction {
+  decideEntityAction(
+    entity: Pick<Entity, 'riskScore' | 'localThreshold' | 'currentState'>,
+  ): LocalAction {
     if (entity.riskScore > entity.localThreshold) {
-      if (entity.currentState === 'critical' || entity.currentState === 'reactive') {
+      if (
+        entity.currentState === 'critical' ||
+        entity.currentState === 'reactive'
+      ) {
         return 'dampen';
       }
 

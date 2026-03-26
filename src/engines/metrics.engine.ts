@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  Mode,
-  SystemAction,
-} from '../simulation/types/action-mode.type';
+import { Mode, SystemAction } from '../simulation/types/action-mode.type';
 import { Entity } from '../simulation/types/entity.type';
 import { Event } from '../simulation/types/event.type';
 import {
@@ -119,7 +116,8 @@ export class MetricsEngine {
         clusterDensity: snapshot.clusterDensity,
         hotShare: snapshot.hotShare,
         failureProximity: snapshot.failureProximity,
-        weightedAvgTemperature: weights.avgTemperature * snapshot.avgTemperature,
+        weightedAvgTemperature:
+          weights.avgTemperature * snapshot.avgTemperature,
         weightedAvgVelocity: weights.avgVelocity * snapshot.avgVelocity,
         weightedClusterDensity:
           weights.clusterDensity * snapshot.clusterDensity,

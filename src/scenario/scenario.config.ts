@@ -19,7 +19,14 @@ const defaultEvent: Event = {
 export const DEFAULT_SCENARIO: Scenario = {
   key: 'global-chaos-mvp',
   name: 'Global Chaos MVP',
-  states: ['calm', 'interested', 'reactive', 'critical', 'stabilized', 'failed'],
+  states: [
+    'calm',
+    'interested',
+    'reactive',
+    'critical',
+    'stabilized',
+    'failed',
+  ],
   successStates: ['stabilized'],
   failureStates: ['failed'],
   terminalStates: ['stabilized', 'failed'],

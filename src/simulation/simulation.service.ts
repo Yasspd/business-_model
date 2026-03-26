@@ -14,10 +14,7 @@ import {
   SimulationResponse,
   SimulationStepItem,
 } from './types/simulation-response.type';
-import {
-  EntitySegment,
-  Scenario,
-} from './types/scenario-config.type';
+import { EntitySegment, Scenario } from './types/scenario-config.type';
 
 @Injectable()
 export class SimulationService {
@@ -35,10 +32,11 @@ export class SimulationService {
 
   runSimulation(dto: RunSimulationDto): SimulationResponse {
     const scenario = this.scenarioService.getScenario(dto.scenarioKey);
-    const transitionMatrixValidated = this.transitionEngine.validateTransitionMatrix(
-      scenario.transitionMatrix,
-      scenario.states,
-    );
+    const transitionMatrixValidated =
+      this.transitionEngine.validateTransitionMatrix(
+        scenario.transitionMatrix,
+        scenario.states,
+      );
     const seed = dto.seed ?? SimulationService.DEFAULT_SEED;
     const randomEngine = new RandomEngine(seed);
 
@@ -65,9 +63,14 @@ export class SimulationService {
           scenario.transitionMatrix,
           randomEngine,
         );
-        entity.isFinished = scenario.terminalStates.includes(entity.currentState);
+        entity.isFinished = scenario.terminalStates.includes(
+          entity.currentState,
+        );
 
-        const influence = this.positionEngine.computeInfluence(entity, activeEvent);
+        const influence = this.positionEngine.computeInfluence(
+          entity,
+          activeEvent,
+        );
         const nextPosition = this.positionEngine.updatePosition(
           entity,
           activeEvent,
@@ -94,10 +97,11 @@ export class SimulationService {
           entity.currentState,
           scenario.riskMap,
         );
-        entity.failureProbability = this.scoringEngine.computeFailureProbability(
-          entity.currentState,
-          scenario,
-        );
+        entity.failureProbability =
+          this.scoringEngine.computeFailureProbability(
+            entity.currentState,
+            scenario,
+          );
         entity.riskScore = this.scoringEngine.computeRiskScore(
           entity.stateRisk,
           entity.temperature,
@@ -160,7 +164,9 @@ export class SimulationService {
       );
 
       for (const entity of entities) {
-        entity.isFinished = scenario.terminalStates.includes(entity.currentState);
+        entity.isFinished = scenario.terminalStates.includes(
+          entity.currentState,
+        );
         entity.history.push({
           step,
           state: entity.currentState,
@@ -253,7 +259,11 @@ export class SimulationService {
     scenario: Scenario,
     randomEngine: RandomEngine,
   ): Entity[] {
-    const segments = this.buildSegmentSequence(entitiesCount, scenario, randomEngine);
+    const segments = this.buildSegmentSequence(
+      entitiesCount,
+      scenario,
+      randomEngine,
+    );
 
     return segments.map((segment, index) =>
       this.createEntity(index + 1, segment, scenario, randomEngine),
@@ -288,13 +298,22 @@ export class SimulationService {
     randomEngine: RandomEngine,
   ): Entity {
     const preset = scenario.segmentPresets[segment];
-    const x = randomEngine.nextInRange(preset.position.min, preset.position.max);
-    const y = randomEngine.nextInRange(preset.position.min, preset.position.max);
+    const x = randomEngine.nextInRange(
+      preset.position.min,
+      preset.position.max,
+    );
+    const y = randomEngine.nextInRange(
+      preset.position.min,
+      preset.position.max,
+    );
     const temperature = randomEngine.nextInRange(
       preset.temperature.min,
       preset.temperature.max,
     );
-    const weight = randomEngine.nextInRange(preset.weight.min, preset.weight.max);
+    const weight = randomEngine.nextInRange(
+      preset.weight.min,
+      preset.weight.max,
+    );
     const sensitivity = randomEngine.nextInRange(
       preset.sensitivity.min,
       preset.sensitivity.max,

@@ -1,9 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  clamp,
-  weightedRandomPick,
-  WeightedOption,
-} from './math.util';
+import { clamp, weightedRandomPick, WeightedOption } from './math.util';
 import { RandomEngine } from './random.engine';
 import {
   RiskMap,
@@ -70,12 +66,12 @@ export class TransitionEngine {
       throw new Error(`Transition row for state "${currentState}" is missing`);
     }
 
-    const options: Array<WeightedOption<State>> = Object.entries(transition).map(
-      ([value, weight]) => ({
-        value,
-        weight,
-      }),
-    );
+    const options: Array<WeightedOption<State>> = Object.entries(
+      transition,
+    ).map(([value, weight]) => ({
+      value,
+      weight,
+    }));
 
     return weightedRandomPick(options, randomEngine.next());
   }
@@ -124,8 +120,7 @@ export class TransitionEngine {
 
       const failureProbability = Object.entries(transition).reduce(
         (sum, [nextState, transitionProbability]) =>
-          sum +
-          transitionProbability * walk(nextState, remainingDepth - 1),
+          sum + transitionProbability * walk(nextState, remainingDepth - 1),
         0,
       );
 

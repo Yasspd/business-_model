@@ -20,7 +20,11 @@ export class ScoringEngine {
     currentState: State,
     scenario: Pick<
       Scenario,
-      'transitionMatrix' | 'failureStates' | 'successStates' | 'riskMap' | 'maxFailureDepth'
+      | 'transitionMatrix'
+      | 'failureStates'
+      | 'successStates'
+      | 'riskMap'
+      | 'maxFailureDepth'
     >,
   ): number {
     return this.transitionEngine.estimateFailureProbability(

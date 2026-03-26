@@ -21,7 +21,12 @@ export class PositionEngine {
       return 0;
     }
 
-    const distance = distance2D(entity.x, entity.y, activeEvent.x, activeEvent.y);
+    const distance = distance2D(
+      entity.x,
+      entity.y,
+      activeEvent.x,
+      activeEvent.y,
+    );
 
     return clamp(
       (activeEvent.intensity *

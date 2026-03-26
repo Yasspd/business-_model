@@ -1,10 +1,31 @@
+import type { Server } from 'node:http';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from './../src/app.module';
+import type { SimulationResponse } from './../src/simulation/types/simulation-response.type';
+
+function isSimulationResponse(value: unknown): value is SimulationResponse {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<SimulationResponse>;
+
+  return (
+    typeof candidate.scenarioKey === 'string' &&
+    typeof candidate.mode === 'string' &&
+    typeof candidate.seed === 'number' &&
+    typeof candidate.summary === 'object' &&
+    Array.isArray(candidate.steps) &&
+    Array.isArray(candidate.entities) &&
+    typeof candidate.debug === 'object'
+  );
+}
 
 describe('SimulationController (e2e)', () => {
   let app: INestApplication;
+  let httpServer: Server;
 
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -20,6 +41,7 @@ describe('SimulationController (e2e)', () => {
       }),
     );
     await app.init();
+    httpServer = app.getHttpServer() as Server;
   });
 
   afterEach(async () => {
@@ -27,7 +49,7 @@ describe('SimulationController (e2e)', () => {
   });
 
   it('/simulation/scenarios (GET)', () => {
-    return request(app.getHttpServer())
+    return request(httpServer)
       .get('/simulation/scenarios')
       .expect(200)
       .expect([
@@ -39,7 +61,7 @@ describe('SimulationController (e2e)', () => {
   });
 
   it('/simulation/run (POST)', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(httpServer)
       .post('/simulation/run')
       .send({
         scenarioKey: 'global-chaos-mvp',
@@ -51,12 +73,20 @@ describe('SimulationController (e2e)', () => {
       })
       .expect(201);
 
-    expect(response.body.scenarioKey).toBe('global-chaos-mvp');
-    expect(response.body.mode).toBe('adaptive');
-    expect(response.body.seed).toBe(12345);
-    expect(response.body.summary.totalEntities).toBe(10);
-    expect(response.body.steps).toHaveLength(3);
-    expect(response.body.entities).toHaveLength(4);
-    expect(response.body.debug.transitionMatrixValidated).toBe(true);
+    const body: unknown = response.body;
+
+    expect(isSimulationResponse(body)).toBe(true);
+
+    if (!isSimulationResponse(body)) {
+      throw new Error('Response body is not a valid simulation response');
+    }
+
+    expect(body.scenarioKey).toBe('global-chaos-mvp');
+    expect(body.mode).toBe('adaptive');
+    expect(body.seed).toBe(12345);
+    expect(body.summary.totalEntities).toBe(10);
+    expect(body.steps).toHaveLength(3);
+    expect(body.entities).toHaveLength(4);
+    expect(body.debug.transitionMatrixValidated).toBe(true);
   });
 });

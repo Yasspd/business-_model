@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { TransitionEngine } from '../engines/transition.engine';
-import { Scenario, ScenarioListItem } from '../simulation/types/scenario-config.type';
+import {
+  Scenario,
+  ScenarioListItem,
+} from '../simulation/types/scenario-config.type';
 import { DEFAULT_SCENARIO, SCENARIOS } from './scenario.config';
 
 @Injectable()
