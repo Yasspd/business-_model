@@ -91,4 +91,37 @@ describe('Контроллер симуляции (e2e)', () => {
     expect(body.entities).toHaveLength(4);
     expect(body.debug.transitionMatrixValidated).toBe(true);
   });
+
+  it('завершённые сущности не обрабатываются на следующих шагах', async () => {
+    const response = await request(httpServer)
+      .post('/simulation/run')
+      .send({
+        scenarioKey: 'global-chaos-mvp',
+        entitiesCount: 10,
+        steps: 6,
+        mode: 'adaptive',
+        seed: 1,
+        returnEntitiesLimit: 10,
+      })
+      .expect(201);
+
+    const body: unknown = response.body;
+
+    expect(isSimulationResponse(body)).toBe(true);
+
+    if (!isSimulationResponse(body)) {
+      throw new Error(
+        'Тело ответа не соответствует формату SimulationResponse',
+      );
+    }
+
+    const frozenEntity = body.entities.find(
+      (entity) => entity.isFinished && entity.history.length < 6,
+    );
+
+    expect(frozenEntity).toBeDefined();
+    expect(
+      frozenEntity?.history.map((historyItem) => historyItem.step),
+    ).toEqual([1, 2, 3]);
+  });
 });

@@ -56,8 +56,9 @@ export class SimulationService {
         scenario.events,
       );
       const activeEventIntensity = activeEvent?.intensity ?? 0;
+      const activeEntities = entities.filter((entity) => !entity.isFinished);
 
-      for (const entity of entities) {
+      for (const entity of activeEntities) {
         entity.currentState = this.transitionEngine.pickNextState(
           entity.currentState,
           scenario.transitionMatrix,
@@ -113,20 +114,20 @@ export class SimulationService {
       }
 
       const localThresholds = this.thresholdEngine.computeLocalThresholds(
-        entities,
+        activeEntities,
         dto.mode,
         scenario.fixedThresholds,
         scenario.adaptiveThresholds,
       );
 
-      for (const entity of entities) {
+      for (const entity of activeEntities) {
         entity.localThreshold =
           localThresholds.get(entity.id) ?? scenario.fixedThresholds.local;
         entity.action = this.actionEngine.decideEntityAction(entity);
         this.actionEngine.applyLocalActionEffects(entity, dto.mode);
       }
 
-      this.refreshEntityRiskScores(entities, scenario);
+      this.refreshEntityRiskScores(activeEntities, scenario);
 
       const observedStepMetrics = this.metricsEngine.computeStepMetrics(
         entities,
@@ -150,10 +151,10 @@ export class SimulationService {
       this.actionEngine.applySystemActionEffects(
         systemAction,
         dto.mode,
-        entities,
+        activeEntities,
         activeEvent,
       );
-      this.refreshEntityRiskScores(entities, scenario);
+      this.refreshEntityRiskScores(activeEntities, scenario);
 
       const reportedStepMetrics = this.metricsEngine.computeStepMetrics(
         entities,
@@ -175,7 +176,7 @@ export class SimulationService {
       chaosHistory.push(reportedStepMetrics.chaosIndex);
       stepItems.push(stepItem);
 
-      for (const entity of entities) {
+      for (const entity of activeEntities) {
         entity.isFinished = scenario.terminalStates.includes(
           entity.currentState,
         );
