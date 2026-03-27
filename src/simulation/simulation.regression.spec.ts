@@ -32,6 +32,9 @@ describe('Simulation regression', () => {
     expect(response.summary.finishedEntities).toBe(
       response.summary.stabilizedCount + response.summary.failedCount,
     );
+    expect(response.summary.actionCount).toBe(
+      response.summary.lastStepActionCount,
+    );
     expect(response.lastStep?.step).toBe(response.requestedSteps);
     expect(response.lastStep?.cumulativeFinished).toBe(
       response.summary.finishedEntities,
@@ -41,6 +44,35 @@ describe('Simulation regression', () => {
     );
     expect(response.lastStep?.cumulativeFailed).toBe(
       response.summary.failedCount,
+    );
+    expect(response.summary.finalChaosIndex).toBe(
+      response.lastStep?.chaosIndex ?? 0,
+    );
+    expect(response.summary.finalGlobalThreshold).toBe(
+      response.lastStep?.globalThreshold ?? 0,
+    );
+    expect(response.summary.finalSystemAction).toBe(
+      response.lastStep?.systemAction ?? 'system_normal',
+    );
+    expect(response.summary.lastStepActionsBreakdown).toEqual(
+      response.lastStep?.actionsBreakdown ?? {
+        watch: 0,
+        notify: 0,
+        dampen: 0,
+        total: 0,
+      },
+    );
+    expect(response.summary.maxChaosIndex).toBeGreaterThanOrEqual(
+      response.summary.finalChaosIndex,
+    );
+    expect(response.summary.maxHotEntities).toBeGreaterThanOrEqual(
+      response.summary.hotEntities,
+    );
+    expect(response.summary.hotEntitiesTotal).toBeGreaterThanOrEqual(
+      response.summary.hotEntities,
+    );
+    expect(response.summary.hotEntitiesTotal).toBeGreaterThanOrEqual(
+      response.summary.hotActiveEntities,
     );
 
     expectFiniteInRange(response.summary.avgTemperature, 0, 1);
@@ -58,6 +90,30 @@ describe('Simulation regression', () => {
     expectFiniteInRange(response.summary.maxTemperature, 0, 1);
     expectFiniteInRange(response.summary.conversionRate, 0, 1);
     expectFiniteInRange(response.summary.failureRate, 0, 1);
+
+    const stepActionTotals = response.steps.reduce(
+      (totals, step) => ({
+        watch: totals.watch + step.actionsBreakdown.watch,
+        notify: totals.notify + step.actionsBreakdown.notify,
+        dampen: totals.dampen + step.actionsBreakdown.dampen,
+        total: totals.total + step.actionsBreakdown.total,
+      }),
+      {
+        watch: 0,
+        notify: 0,
+        dampen: 0,
+        total: 0,
+      },
+    );
+
+    expect(stepActionTotals.watch).toBe(response.summary.watchCountTotal);
+    expect(stepActionTotals.notify).toBe(response.summary.notifyCountTotal);
+    expect(stepActionTotals.dampen).toBe(response.summary.dampenCountTotal);
+    expect(stepActionTotals.total).toBe(response.summary.actionCountTotal);
+
+    let previousCumulativeFinished = 0;
+    let previousCumulativeStabilized = 0;
+    let previousCumulativeFailed = 0;
 
     for (const step of response.steps) {
       expect(sumDistribution(step.stateDistribution)).toBe(
@@ -89,9 +145,31 @@ describe('Simulation regression', () => {
       expectFiniteInRange(step.failureProximity, 0, 1);
       expectFiniteInRange(step.chaosIndex, 0, 1);
       expectFiniteInRange(step.globalThreshold, 0.15, 0.95);
+      expect(step.finishedThisStep).toBe(
+        step.stabilizedThisStep + step.failedThisStep,
+      );
+      expect(step.cumulativeFinished).toBe(
+        previousCumulativeFinished + step.finishedThisStep,
+      );
+      expect(step.cumulativeStabilized).toBe(
+        previousCumulativeStabilized + step.stabilizedThisStep,
+      );
+      expect(step.cumulativeFailed).toBe(
+        previousCumulativeFailed + step.failedThisStep,
+      );
+      expect(step.eventSnapshot?.intensity ?? 0).toBe(
+        step.activeEventIntensity,
+      );
+
+      previousCumulativeFinished = step.cumulativeFinished;
+      previousCumulativeStabilized = step.cumulativeStabilized;
+      previousCumulativeFailed = step.cumulativeFailed;
     }
 
     for (const entity of response.entities) {
+      expect(entity.history.length).toBeLessThanOrEqual(
+        response.requestedSteps,
+      );
       expect(entity.history.map((historyItem) => historyItem.step)).toEqual(
         Array.from({ length: entity.history.length }, (_, index) => index + 1),
       );
@@ -116,9 +194,26 @@ describe('Simulation regression', () => {
     }
   }
 
+  function normalizeAdaptiveHybridResponse(response: SimulationResponse) {
+    const normalized = normalizeSimulationResponse(response);
+
+    if (normalized.lastStep) {
+      Reflect.deleteProperty(normalized.lastStep, 'breakdown');
+    }
+
+    for (const step of normalized.steps) {
+      Reflect.deleteProperty(step, 'breakdown');
+    }
+
+    return {
+      ...normalized,
+      mode: 'adaptive',
+    };
+  }
+
   it('preserves invariants across a compact profile/mode/seed matrix', () => {
     const profiles = ['demo', 'realistic', 'stress'] as const;
-    const modes = ['fixed', 'adaptive'] as const;
+    const modes = ['baseline', 'fixed', 'adaptive', 'hybrid'] as const;
     const seeds = [11, 29];
 
     for (const profile of profiles) {
@@ -157,6 +252,14 @@ describe('Simulation regression', () => {
               expect(step.globalThreshold).toBe(0.7);
               expect(step.systemAction).toBe('system_normal');
             }
+          } else if (mode === 'hybrid') {
+            for (const step of response.steps) {
+              expect(step.breakdown).toBeDefined();
+            }
+          } else {
+            for (const step of response.steps) {
+              expect(step.breakdown).toBeUndefined();
+            }
           }
         }
       }
@@ -165,7 +268,7 @@ describe('Simulation regression', () => {
 
   it('remains deterministic for repeated runs with the same seed', () => {
     const profiles = ['demo', 'realistic', 'stress'] as const;
-    const modes = ['fixed', 'adaptive'] as const;
+    const modes = ['baseline', 'fixed', 'adaptive', 'hybrid'] as const;
     const seeds = [11, 29];
 
     for (const profile of profiles) {
@@ -228,5 +331,65 @@ describe('Simulation regression', () => {
 
     expect(trajectoryDiverged).toBe(true);
     expect(terminalDiverged).toBe(true);
+  });
+
+  it('keeps baseline as report-only mode without immediate action effects', () => {
+    const baselineResponse = service.runSimulation(
+      createStrongStressRunDto({
+        mode: 'baseline',
+      }),
+    );
+    const adaptiveResponse = service.runSimulation(
+      createStrongStressRunDto({
+        mode: 'adaptive',
+      }),
+    );
+
+    assertCoreRunInvariants(baselineResponse);
+    assertCoreRunInvariants(adaptiveResponse);
+
+    expect(baselineResponse.steps[0].actionsBreakdown.total).toBeGreaterThan(0);
+    expect(baselineResponse.steps[0].actionsBreakdown).toEqual(
+      adaptiveResponse.steps[0].actionsBreakdown,
+    );
+    expect(baselineResponse.steps[0].systemAction).toBe(
+      adaptiveResponse.steps[0].systemAction,
+    );
+    expect(
+      baselineResponse.steps[0].avgTemperature !==
+        adaptiveResponse.steps[0].avgTemperature ||
+        baselineResponse.steps[0].avgInfluence !==
+          adaptiveResponse.steps[0].avgInfluence ||
+        baselineResponse.steps[0].avgRiskScore !==
+          adaptiveResponse.steps[0].avgRiskScore ||
+        baselineResponse.steps[0].chaosIndex !==
+          adaptiveResponse.steps[0].chaosIndex,
+    ).toBe(true);
+  });
+
+  it('keeps hybrid semantically aligned with adaptive while exposing breakdown telemetry', () => {
+    const adaptiveResponse = service.runSimulation(
+      createStrongStressRunDto({
+        mode: 'adaptive',
+      }),
+    );
+    const hybridResponse = service.runSimulation(
+      createStrongStressRunDto({
+        mode: 'hybrid',
+      }),
+    );
+
+    assertCoreRunInvariants(adaptiveResponse);
+    assertCoreRunInvariants(hybridResponse);
+
+    expect(
+      adaptiveResponse.steps.every((step) => step.breakdown === undefined),
+    ).toBe(true);
+    expect(
+      hybridResponse.steps.every((step) => step.breakdown !== undefined),
+    ).toBe(true);
+    expect(normalizeAdaptiveHybridResponse(hybridResponse)).toEqual(
+      normalizeAdaptiveHybridResponse(adaptiveResponse),
+    );
   });
 });

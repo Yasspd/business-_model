@@ -1,98 +1,240 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Business Model Simulation Engine
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS + TypeScript backend для гибридной simulation/decision model.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Проект моделирует generic `Entity`-сущности, которые:
+- переходят между состояниями по Markov transition matrix
+- живут в нормализованном 2D-пространстве `[0, 1] x [0, 1]`
+- реагируют на active event через influence, movement и temperature
+- получают локальные и системные decisions в зависимости от risk/chaos telemetry
 
-## Description
+Текущий основной сценарий: `global-chaos-mvp`.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Что моделируется
 
-## Project setup
+Основные доменные объекты:
+- `Entity`: активная сущность с состоянием, координатами, temperature, influence, velocity, risk score и history
+- `Event`: внешний драйвер системы, влияющий на influence и movement
+- `Run`: один завершённый simulation run с `runId`, `summary`, `lastStep`, `steps` и `entities`
+- `Step`: телеметрический снимок одного шага внутри run
+- `Summary`: агрегаты по всему run и по финальному состоянию системы
+
+Состояния в текущем MVP:
+- `calm`
+- `interested`
+- `reactive`
+- `critical`
+- `stabilized`
+- `failed`
+
+Terminal states по текущей semantics:
+- `stabilized`
+- `failed`
+
+После входа в terminal state entity замораживается:
+- больше не двигается
+- не обновляет influence / velocity / temperature
+- не получает новых local actions
+- не растит history на следующих шагах
+
+## Runs, Steps и Telemetry
+
+API возвращает несколько уровней данных:
+- `summary`: итог по всему run
+- `lastStep`: снимок только последнего шага
+- `steps`: timeline step-by-step telemetry
+- `entities`: финальное состояние entity-массива с history
+- `activeEventSnapshot`: снимок primary event для run
+
+Важно:
+- `latest simulation` означает последний успешно завершённый run со статусом `completed`
+- `entities` могут быть усечены через `returnEntitiesLimit`
+- `summary` всегда считается по полному run, даже если `entities` усечены
+
+## API
+
+Доступные endpoints:
+- `GET /simulation/scenarios`
+- `GET /simulation/latest`
+- `GET /simulation/runs`
+- `GET /simulation/runs/:runId`
+- `POST /simulation/run`
+
+Основной запуск:
+- `scenarioKey` обязателен
+- `entitiesCount`: `10..5000`
+- `steps`: `1..50`
+- `mode`: `baseline | fixed | adaptive | hybrid`
+- `profile`: `demo | realistic | stress`
+- `seed` опционален, но важен для воспроизводимости
+- `activeEventOverride` позволяет переопределить параметры primary event
+
+## Режимы
+
+| Mode | Что делает | Decisions | Immediate effects | Отличие |
+| --- | --- | --- | --- | --- |
+| `baseline` | Report-only режим | Да, decisions и system actions рассчитываются и попадают в telemetry | Нет | Показывает, что модель бы решила, но не применяет local/system effects и control-memory propagation |
+| `fixed` | Контрольная группа | Нет, local actions отключены, system action всегда `system_normal` | Нет | Пассивный control group с фиксированными thresholds |
+| `adaptive` | Активный рабочий режим | Да | Да | Thresholds и actions влияют на next-step dynamics через local/system effects и `stressMemory` |
+| `hybrid` | Adaptive + расширенная диагностика | Да | Да | По runtime semantics сейчас близок к `adaptive`, но дополнительно возвращает step-level `breakdown` по chaos sub-indexes |
+
+Текущая честная semantics:
+- `baseline` не равен `fixed`
+- `baseline` не пассивен по reporting-слою, но пассивен по effect-слою
+- `hybrid` сейчас не отдельная control logic ветка, а `adaptive` с более подробной telemetry
+
+## Profiles
+
+| Profile | Текущая семантика |
+| --- | --- |
+| `demo` | Ближайший к базовому MVP профиль: без seeded noise, без event lifecycle и без delayed effects; наиболее консервативный по divergence |
+| `realistic` | Включает lifecycle event, delayed effects, inertia и умеренный stochastic noise; лучше показывает segment differentiation |
+| `stress` | Самый агрессивный профиль: сильнее event coupling, ниже барьер активации system layer и выше чувствительность для stress/regression прогонов |
+
+Практический смысл:
+- `demo` удобен для базовой контрольной проверки
+- `realistic` ближе к правдоподобной динамике
+- `stress` нужен для доказуемых divergence/regression сценариев
+
+## Ключевые метрики
+
+Независимые terminal outcomes:
+- `stabilizedCount`
+- `failedCount`
+
+Производные метрики:
+- `finishedEntities = stabilizedCount + failedCount`
+- `actionCount` — backward-compatible alias для `lastStepActionCount`
+
+Operational metrics:
+- `actionCountTotal`: все локальные actions за весь run, кроме `no_action`
+- `watchCountTotal`, `notifyCountTotal`, `dampenCountTotal`: breakdown по всему run
+- `avgTemperature`: средняя температура по всем entities в финальном состоянии
+- `avgInfluence`: средний influence по всем entities в финальном состоянии
+- `avgRiskScore`: средний risk score по всем entities в финальном состоянии
+- `avgFailureProbability`: средняя failure probability по всем entities в финальном состоянии
+- `finalChaosIndex`: chaos index последнего шага
+- `finalGlobalThreshold`: global threshold последнего шага
+- `finalSystemAction`: system action последнего шага
+
+Hot-related metrics:
+- `hotEntities`: число hot entities в финальном состоянии
+- `hotEntitiesTotal`: число уникальных entities, которые хотя бы раз были hot
+- `hotActiveEntities`: число hot entities, которые в финале ещё не завершены
+- `maxHotEntities`: максимальное число hot entities одновременно на одном шаге
+
+## Telemetry semantics
+
+`current` vs `residual`:
+- `avgCurrentInfluence`, `avgCurrentVelocity` считаются только по ещё активным entities
+- `avgResidualInfluence`, `avgResidualVelocity` считаются только по уже завершённым entities
+- после окончания active event именно current-метрики должны уходить к нулю, residual-метрики могут оставаться ненулевыми
+
+`avgInfluence` и `avgVelocity`:
+- это агрегаты по всем entities, включая уже frozen terminal entities
+
+`activeEvent` telemetry:
+- каждый step содержит `activeEventIntensity`
+- каждый step также содержит `eventSnapshot`
+- в `hybrid` режиме step дополнительно содержит `breakdown` по chaos sub-indexes
+
+History semantics:
+- `steps` — system-level timeline
+- `entities[].history` — entity-level snapshots по шагам
+- history заполняется только пока entity активна
+
+## QA layers
+
+В проекте сейчас три основных QA-слоя.
+
+`e2e layer`
+- проверяет HTTP contract
+- проверяет response shape и публичные endpoints
+- покрывает latest runs, run retrieval, terminal freeze и current/residual telemetry
+
+`unit engine layer`
+- покрывает pure engines:
+  - thresholds
+  - actions
+  - metrics
+  - transitions
+  - position math
+  - scoring
+- проверяет deterministic math, bounds, fallback logic и controlled formulas
+
+`regression / service layer`
+- проверяет orchestration через `SimulationService`
+- покрывает matrix по profiles / modes / seeds
+- проверяет determinism repeated runs
+- проверяет fixed control-group correctness
+- проверяет divergence между режимами
+
+## QA guarantees
+
+Что уже доказано текущим тестовым слоем:
+- одинаковый `seed` даёт воспроизводимый результат на repeated runs
+- `fixed` является пассивной control group
+- `adaptive` расходится с `fixed` под сильным stress не только по telemetry, но и по terminal outcomes
+- `trajectory divergence` и `terminal divergence` тестируются отдельно
+- `summary`, `lastStep`, `steps` и `entities[].history` внутренне согласованы
+- bounded metrics не уходят в `NaN`, `Infinity` и недопустимые диапазоны
+- transition math, position math и scoring math покрыты отдельными unit tests
+- terminal states реально freeze semantics, а не только label в summary
+
+## Known limitations / current boundaries
+
+- README описывает текущее состояние кода, а не будущие идеи
+- `demo` профиль намеренно более консервативен; в нём trajectory divergence может появляться раньше, чем terminal divergence
+- `hybrid` сейчас по runtime semantics очень близок к `adaptive`; его главное отличие — расширенный telemetry `breakdown`
+- orchestration доказана сильным regression-слоем, но private internals `SimulationService` не разложены на полностью изолированные unit tests
+- persistence остаётся in-memory; это подходит для локального анализа и QA, но не является database-backed storage
+
+## How to run
+
+Установка:
 
 ```bash
-$ npm install
+npm install
 ```
 
-## Compile and run the project
+Запуск:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run start:dev
 ```
 
-## Run tests
+Проверки:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run lint
+npm run build
+npm run test
+npm run test:e2e -- --runInBand
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Пример запуска simulation
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+curl -X POST http://localhost:3000/simulation/run \
+  -H "Content-Type: application/json" \
+  -d "{\"scenarioKey\":\"global-chaos-mvp\",\"entitiesCount\":100,\"steps\":6,\"mode\":\"adaptive\",\"profile\":\"stress\",\"seed\":123,\"returnEntitiesLimit\":10}"
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Что вернётся:
+- `runId`, `startedAt`, `finishedAt`, `status`
+- `summary` с итоговыми метриками по всему run
+- `lastStep` как финальный step snapshot
+- `steps` как timeline
+- `entities` как финальные entity snapshots с history
 
-## Resources
+Для короткой аналитики обычно достаточно смотреть:
+- `summary.stabilizedCount`
+- `summary.failedCount`
+- `summary.finalChaosIndex`
+- `summary.finalGlobalThreshold`
+- `summary.finalSystemAction`
+- `lastStep.actionsBreakdown`
 
-Check out a few resources that may come in handy when working with NestJS:
+## Дополнительные заметки
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Более узкие notes по semantics лежат в [src/simulation/README.md](src/simulation/README.md).
