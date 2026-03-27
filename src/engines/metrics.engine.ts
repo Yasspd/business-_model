@@ -15,6 +15,10 @@ export interface StepMetricsSnapshot {
   avgTemperature: number;
   avgInfluence: number;
   avgVelocity: number;
+  avgCurrentInfluence: number;
+  avgResidualInfluence: number;
+  avgCurrentVelocity: number;
+  avgResidualVelocity: number;
   avgRiskScore: number;
   avgFailureProbability: number;
   clusterDensity: number;
@@ -66,6 +70,15 @@ export class MetricsEngine {
 
   computeAvgVelocity(entities: Entity[]): number {
     return mean(entities.map((entity) => entity.velocity));
+  }
+
+  computeResidualEntities(
+    entities: Entity[],
+    activeEntities: Entity[],
+  ): Entity[] {
+    const activeEntityIds = new Set(activeEntities.map((entity) => entity.id));
+
+    return entities.filter((entity) => !activeEntityIds.has(entity.id));
   }
 
   computeAvgRiskScore(entities: Entity[]): number {
@@ -144,10 +157,18 @@ export class MetricsEngine {
     weights: ChaosIndexWeights,
     includeBreakdown: boolean,
   ): StepMetricsSnapshot {
+    const residualEntities = this.computeResidualEntities(
+      entities,
+      activeEntities,
+    );
     const snapshot = {
       avgTemperature: this.computeAvgTemperature(entities),
       avgInfluence: this.computeAvgInfluence(entities),
       avgVelocity: this.computeAvgVelocity(entities),
+      avgCurrentInfluence: this.computeAvgInfluence(activeEntities),
+      avgResidualInfluence: this.computeAvgInfluence(residualEntities),
+      avgCurrentVelocity: this.computeAvgVelocity(activeEntities),
+      avgResidualVelocity: this.computeAvgVelocity(residualEntities),
       avgRiskScore: this.computeAvgRiskScore(entities),
       avgFailureProbability: this.computeAvgFailureProbability(entities),
       clusterDensity: this.computeClusterDensity(
@@ -248,6 +269,10 @@ export class MetricsEngine {
       avgTemperature: options.metrics.avgTemperature,
       avgInfluence: options.metrics.avgInfluence,
       avgVelocity: options.metrics.avgVelocity,
+      avgCurrentInfluence: options.metrics.avgCurrentInfluence,
+      avgResidualInfluence: options.metrics.avgResidualInfluence,
+      avgCurrentVelocity: options.metrics.avgCurrentVelocity,
+      avgResidualVelocity: options.metrics.avgResidualVelocity,
       avgRiskScore: options.metrics.avgRiskScore,
       avgFailureProbability: options.metrics.avgFailureProbability,
       clusterDensity: options.metrics.clusterDensity,
@@ -290,6 +315,12 @@ export class MetricsEngine {
       options.entities.filter((entity) => !entity.isFinished),
       options.systemHotThreshold,
     );
+    const activeEntities = options.entities.filter(
+      (entity) => !entity.isFinished,
+    );
+    const residualEntities = options.entities.filter(
+      (entity) => entity.isFinished,
+    );
     const lastStep = options.steps[options.steps.length - 1];
     const chaosValues = options.steps.map((step) => step.chaosIndex);
 
@@ -320,6 +351,10 @@ export class MetricsEngine {
       failureRate: totalEntities === 0 ? 0 : failedCount / totalEntities,
       avgTemperature: this.computeAvgTemperature(options.entities),
       avgInfluence: this.computeAvgInfluence(options.entities),
+      avgCurrentInfluence: this.computeAvgInfluence(activeEntities),
+      avgResidualInfluence: this.computeAvgInfluence(residualEntities),
+      avgCurrentVelocity: this.computeAvgVelocity(activeEntities),
+      avgResidualVelocity: this.computeAvgVelocity(residualEntities),
       avgRiskScore: this.computeAvgRiskScore(options.entities),
       avgFailureProbability: this.computeAvgFailureProbability(
         options.entities,

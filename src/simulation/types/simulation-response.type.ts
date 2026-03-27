@@ -56,6 +56,10 @@ export interface SimulationSummary {
   failureRate: number;
   avgTemperature: number;
   avgInfluence: number;
+  avgCurrentInfluence: number;
+  avgResidualInfluence: number;
+  avgCurrentVelocity: number;
+  avgResidualVelocity: number;
   avgRiskScore: number;
   avgFailureProbability: number;
   finalChaosIndex: number;
@@ -70,6 +74,10 @@ export interface SimulationStepItem {
   avgTemperature: number;
   avgInfluence: number;
   avgVelocity: number;
+  avgCurrentInfluence: number;
+  avgResidualInfluence: number;
+  avgCurrentVelocity: number;
+  avgResidualVelocity: number;
   avgRiskScore: number;
   avgFailureProbability: number;
   clusterDensity: number;

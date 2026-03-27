@@ -218,11 +218,12 @@ export class SimulationService {
             entity.currentState,
             scenario.riskMap,
           );
-          entity.failureProbability =
-            this.scoringEngine.computeFailureProbability(
-              entity.currentState,
-              scenario,
-            );
+          entity.failureProbability = this.computeFailureProbability(
+            entity,
+            scenario,
+            profile,
+            runtimeState,
+          );
           entity.riskScore = this.scoringEngine.computeRiskScore(
             entity.stateRisk,
             entity.temperature,
@@ -266,11 +267,25 @@ export class SimulationService {
           }
 
           entity.localThreshold =
-            localThresholds.get(entity.id) ?? scenario.fixedThresholds.local;
+            dto.mode === 'fixed'
+              ? scenario.fixedThresholds.local
+              : this.adjustLocalThreshold(
+                  localThresholds.get(entity.id) ??
+                    scenario.fixedThresholds.local,
+                  entity,
+                  profile,
+                );
+
+          if (dto.mode === 'fixed') {
+            entity.action = 'no_action';
+            continue;
+          }
+
           entity.action = this.resolveEntityAction(
             entity,
             runtimeState,
             dto.mode,
+            profile,
           );
 
           this.actionEngine.applyLocalActionEffects(
@@ -284,11 +299,17 @@ export class SimulationService {
             dto.mode,
             profile,
           );
+          this.applyLocalActionControlSignal(
+            entity.action,
+            runtimeState,
+            dto.mode,
+            profile,
+          );
 
           if (entity.action !== 'no_action') {
             runtimeState.cooldownRemaining = Math.max(
               runtimeState.cooldownRemaining,
-              profile.inertia.cooldownSteps,
+              profile.inertia.cooldownSteps + 1,
             );
           }
 
@@ -306,16 +327,25 @@ export class SimulationService {
           scenario.chaosIndexWeights,
           dto.mode === 'hybrid',
         );
-        const globalThreshold = this.thresholdEngine.computeGlobalThreshold(
-          [...chaosHistory, observedMetrics.chaosIndex],
-          dto.mode,
-          scenario.fixedThresholds,
-          scenario.adaptiveThresholds,
-        );
-        const systemAction = this.actionEngine.decideSystemAction(
-          observedMetrics.chaosIndex,
-          globalThreshold,
-        );
+        const computedGlobalThreshold =
+          this.thresholdEngine.computeGlobalThreshold(
+            [...chaosHistory, observedMetrics.chaosIndex],
+            dto.mode,
+            scenario.fixedThresholds,
+            scenario.adaptiveThresholds,
+          );
+        const globalThreshold =
+          dto.mode === 'fixed'
+            ? computedGlobalThreshold
+            : this.adjustGlobalThreshold(computedGlobalThreshold, profile);
+        const systemAction =
+          dto.mode === 'fixed'
+            ? 'system_normal'
+            : this.actionEngine.decideSystemAction(
+                observedMetrics.chaosIndex,
+                globalThreshold,
+                profile.systemLayer.stabilizeThreshold,
+              );
 
         this.actionEngine.applySystemActionEffects(
           systemAction,
@@ -330,6 +360,13 @@ export class SimulationService {
           actionEligibleEntities,
           runtimeStates,
           systemRuntimeState,
+          profile,
+        );
+        this.applySystemActionControlSignal(
+          systemAction,
+          actionEligibleEntities,
+          runtimeStates,
+          dto.mode,
           profile,
         );
 
@@ -746,6 +783,81 @@ export class SimulationService {
     }
   }
 
+  private applyLocalActionControlSignal(
+    action: LocalAction,
+    runtimeState: EntityRuntimeState,
+    mode: Mode,
+    profile: SimulationProfile,
+  ): void {
+    if (mode === 'baseline' || action === 'no_action') {
+      return;
+    }
+
+    const profileMultiplier =
+      profile.key === 'stress' ? 1.3 : profile.key === 'realistic' ? 1.15 : 1;
+
+    if (action === 'dampen') {
+      runtimeState.stressMemory = clamp(
+        runtimeState.stressMemory - 0.16 * profileMultiplier,
+        0,
+        1,
+      );
+      return;
+    }
+
+    if (action === 'notify') {
+      runtimeState.stressMemory = clamp(
+        runtimeState.stressMemory - 0.08 * profileMultiplier,
+        0,
+        1,
+      );
+      return;
+    }
+
+    if (action === 'watch') {
+      runtimeState.stressMemory = clamp(
+        runtimeState.stressMemory - 0.04 * profileMultiplier,
+        0,
+        1,
+      );
+    }
+  }
+
+  private applySystemActionControlSignal(
+    systemAction: SystemAction,
+    activeEntities: Entity[],
+    runtimeStates: Map<string, EntityRuntimeState>,
+    mode: Mode,
+    profile: SimulationProfile,
+  ): void {
+    if (mode === 'baseline' || systemAction === 'system_normal') {
+      return;
+    }
+
+    const stressDelta =
+      systemAction === 'stabilize_system'
+        ? -0.1
+        : systemAction === 'rebalance_attention'
+          ? -0.05
+          : 0;
+    const profileMultiplier =
+      profile.key === 'stress' ? 1.2 : profile.key === 'realistic' ? 1.1 : 1;
+
+    for (const entity of activeEntities) {
+      const runtimeState = runtimeStates.get(entity.id);
+
+      if (!runtimeState) {
+        throw new Error(`Runtime state for entity "${entity.id}" not found`);
+      }
+
+      runtimeState.stressMemory = clamp(
+        runtimeState.stressMemory + stressDelta * profileMultiplier,
+        0,
+        1,
+      );
+    }
+  }
+
   private scheduleDelayedDelta(
     queue: [number, number],
     delta: number,
@@ -775,14 +887,10 @@ export class SimulationService {
       );
     }
 
-    if (profile.key === 'demo') {
-      return transition;
-    }
-
     const segmentDynamics = profile.segmentDynamics[entity.segment];
     const pressure = clamp(
-      entity.temperature * 0.45 +
-        entity.influence * 0.2 +
+      entity.temperature * 0.35 +
+        entity.influence * profile.transitionImpact.transitionCoupling +
         runtimeState.stressMemory * 0.35 +
         segmentDynamics.escalationBias +
         this.getSignedNoise(randomEngine, profile.noise.transition),
@@ -1125,12 +1233,75 @@ export class SimulationService {
     return (randomEngine.next() * 2 - 1) * amplitude;
   }
 
+  private computeFailureProbability(
+    entity: Entity,
+    scenario: Scenario,
+    profile: SimulationProfile,
+    runtimeState: EntityRuntimeState,
+  ): number {
+    const baseFailureProbability = this.scoringEngine.computeFailureProbability(
+      entity.currentState,
+      scenario,
+    );
+
+    return clamp(
+      baseFailureProbability +
+        entity.influence * profile.transitionImpact.failureCoupling +
+        entity.temperature * profile.transitionImpact.failureCoupling * 0.5 +
+        runtimeState.stressMemory * 0.08,
+      0,
+      1,
+    );
+  }
+
+  private adjustLocalThreshold(
+    localThreshold: number,
+    entity: Entity,
+    profile: SimulationProfile,
+  ): number {
+    if (
+      entity.currentState === 'calm' ||
+      entity.currentState === 'interested'
+    ) {
+      return clamp(
+        localThreshold - profile.transitionImpact.notifyThresholdOffset,
+        0.35,
+        0.95,
+      );
+    }
+
+    return localThreshold;
+  }
+
+  private adjustGlobalThreshold(
+    globalThreshold: number,
+    profile: SimulationProfile,
+  ): number {
+    return clamp(
+      globalThreshold + profile.systemLayer.globalThresholdShift,
+      0.15,
+      0.95,
+    );
+  }
+
   private resolveEntityAction(
     entity: Entity,
     runtimeState: EntityRuntimeState,
     mode: Mode,
+    profile: SimulationProfile,
   ): LocalAction {
     const decidedAction = this.actionEngine.decideEntityAction(entity);
+
+    if (
+      decidedAction === 'watch' &&
+      (entity.currentState === 'calm' ||
+        entity.currentState === 'interested') &&
+      entity.riskScore >
+        entity.localThreshold -
+          Math.max(profile.transitionImpact.notifyThresholdOffset, 0.05)
+    ) {
+      return 'notify';
+    }
 
     if (
       mode !== 'baseline' &&

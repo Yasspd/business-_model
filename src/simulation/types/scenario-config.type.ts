@@ -2,7 +2,7 @@ import { Event } from './event.type';
 
 export type State = string;
 export type EntitySegment = 'stable' | 'regular' | 'reactive';
-export type SimulationProfileKey = 'demo' | 'realistic';
+export type SimulationProfileKey = 'demo' | 'realistic' | 'stress';
 export type TransitionProbability = number;
 export type Transition = Record<State, TransitionProbability>;
 export type TransitionMatrix = Record<State, Transition>;
@@ -96,6 +96,17 @@ export interface SeededNoiseConfig {
   transition: number;
 }
 
+export interface TransitionImpactConfig {
+  transitionCoupling: number;
+  failureCoupling: number;
+  notifyThresholdOffset: number;
+}
+
+export interface SystemLayerConfig {
+  globalThresholdShift: number;
+  stabilizeThreshold: number;
+}
+
 export interface SimulationProfile {
   key: SimulationProfileKey;
   label: string;
@@ -105,6 +116,8 @@ export interface SimulationProfile {
   inertia: InertiaConfig;
   segmentDynamics: Record<EntitySegment, SegmentDynamicsConfig>;
   noise: SeededNoiseConfig;
+  transitionImpact: TransitionImpactConfig;
+  systemLayer: SystemLayerConfig;
   stabilizedTerminal: boolean;
 }
 

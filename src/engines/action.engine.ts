@@ -44,9 +44,10 @@ export class ActionEngine {
   decideSystemAction(
     chaosIndex: number,
     globalThreshold: number,
+    stabilizeThreshold = 0.8,
   ): SystemAction {
     if (chaosIndex > globalThreshold) {
-      if (chaosIndex >= 0.8) {
+      if (chaosIndex >= stabilizeThreshold) {
         return 'stabilize_system';
       }
 

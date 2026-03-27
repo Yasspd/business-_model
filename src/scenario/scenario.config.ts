@@ -196,6 +196,15 @@ export const DEFAULT_SCENARIO: Scenario = {
         temperature: 0,
         transition: 0,
       },
+      transitionImpact: {
+        transitionCoupling: 0.08,
+        failureCoupling: 0.04,
+        notifyThresholdOffset: 0.03,
+      },
+      systemLayer: {
+        globalThresholdShift: 0,
+        stabilizeThreshold: 0.8,
+      },
       stabilizedTerminal: true,
     },
     realistic: {
@@ -252,6 +261,81 @@ export const DEFAULT_SCENARIO: Scenario = {
         influence: 0.025,
         temperature: 0.02,
         transition: 0.015,
+      },
+      transitionImpact: {
+        transitionCoupling: 0.2,
+        failureCoupling: 0.08,
+        notifyThresholdOffset: 0.05,
+      },
+      systemLayer: {
+        globalThresholdShift: -0.02,
+        stabilizeThreshold: 0.72,
+      },
+      stabilizedTerminal: true,
+    },
+    stress: {
+      key: 'stress',
+      label: 'Stress',
+      hotThresholds: {
+        system: 0.66,
+        visual: 0.6,
+      },
+      eventLifecycle: {
+        enabled: true,
+        rampUpShare: 0.2,
+        peakShare: 0.3,
+        decayShare: 0.5,
+        aftershockSteps: 3,
+        aftershockIntensityMultiplier: 0.5,
+        aftershockScopeMultiplier: 0.7,
+        aftershockRelevanceMultiplier: 0.75,
+      },
+      delayedEffects: {
+        localImmediateShare: 0.75,
+        localNextStepShare: 0.25,
+        systemImmediateShare: 0.7,
+        systemNextStepShare: 0.3,
+        decayFactor: 0.55,
+      },
+      inertia: {
+        stressMemoryDecay: 0.86,
+        temperatureRecovery: 0.03,
+        influenceRecovery: 0.02,
+        cooldownSteps: 1,
+      },
+      segmentDynamics: {
+        stable: {
+          sensitivityMultiplier: 0.95,
+          recoveryFactor: 0.98,
+          escalationBias: 0.04,
+          transitionBias: 1.04,
+        },
+        regular: {
+          sensitivityMultiplier: 1.1,
+          recoveryFactor: 0.9,
+          escalationBias: 0.12,
+          transitionBias: 1.14,
+        },
+        reactive: {
+          sensitivityMultiplier: 1.28,
+          recoveryFactor: 0.74,
+          escalationBias: 0.24,
+          transitionBias: 1.28,
+        },
+      },
+      noise: {
+        influence: 0.02,
+        temperature: 0.02,
+        transition: 0.02,
+      },
+      transitionImpact: {
+        transitionCoupling: 0.34,
+        failureCoupling: 0.14,
+        notifyThresholdOffset: 0.08,
+      },
+      systemLayer: {
+        globalThresholdShift: -0.26,
+        stabilizeThreshold: 0.38,
       },
       stabilizedTerminal: true,
     },

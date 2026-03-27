@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { ACTION_MODES } from '../types/action-mode.type';
 
-const SIMULATION_PROFILES = ['demo', 'realistic'] as const;
+const SIMULATION_PROFILES = ['demo', 'realistic', 'stress'] as const;
 
 class ActiveEventOverrideDto {
   @IsOptional()
