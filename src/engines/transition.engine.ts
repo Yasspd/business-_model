@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+ import { Injectable } from '@nestjs/common';
 import { clamp, weightedRandomPick, WeightedOption } from './math.util';
 import { RandomEngine } from './random.engine';
 import {
