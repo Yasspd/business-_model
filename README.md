@@ -1,25 +1,28 @@
 # Business Model Simulation Engine
 
-NestJS + TypeScript backend для гибридной simulation/decision model.
+NestJS + TypeScript backend для simulation / decision engine. Проект моделирует динамику generic `Entity`-сущностей в 2D-пространстве, совмещая:
 
-Проект моделирует generic `Entity`-сущности, которые:
-- переходят между состояниями по Markov transition matrix
-- живут в нормализованном 2D-пространстве `[0, 1] x [0, 1]`
-- реагируют на active event через influence, movement и temperature
-- получают локальные и системные decisions в зависимости от risk/chaos telemetry
+- Markov state transitions
+- event-driven spatial movement
+- local/system decisions
+- risk / chaos telemetry
+- optional analysis layers для causal, robust и uncertainty оценки
 
 Текущий основной сценарий: `global-chaos-mvp`.
 
 ## Что моделируется
 
-Основные доменные объекты:
+Ключевые доменные объекты:
+
 - `Entity`: активная сущность с состоянием, координатами, temperature, influence, velocity, risk score и history
-- `Event`: внешний драйвер системы, влияющий на influence и movement
-- `Run`: один завершённый simulation run с `runId`, `summary`, `lastStep`, `steps` и `entities`
-- `Step`: телеметрический снимок одного шага внутри run
-- `Summary`: агрегаты по всему run и по финальному состоянию системы
+- `Event`: внешний драйвер системы, влияющий на movement и influence
+- `Run`: один завершённый simulation run с `runId`, `summary`, `lastStep`, `steps`, `entities`
+- `Step`: telemetry snapshot одного шага
+- `Summary`: агрегаты по всему run
+- `Analysis`: опциональный extension block поверх готового run, который не меняет raw simulation result
 
 Состояния в текущем MVP:
+
 - `calm`
 - `interested`
 - `reactive`
@@ -28,131 +31,287 @@ NestJS + TypeScript backend для гибридной simulation/decision model.
 - `failed`
 
 Terminal states по текущей semantics:
+
 - `stabilized`
 - `failed`
 
-После входа в terminal state entity замораживается:
-- больше не двигается
-- не обновляет influence / velocity / temperature
-- не получает новых local actions
+После входа в terminal state entity freeze-ится:
+
+- не двигается
+- не обновляет temperature / influence / velocity
+- не получает новые local actions
 - не растит history на следующих шагах
 
 ## Runs, Steps и Telemetry
 
 API возвращает несколько уровней данных:
+
 - `summary`: итог по всему run
-- `lastStep`: снимок только последнего шага
+- `lastStep`: snapshot только последнего шага
 - `steps`: timeline step-by-step telemetry
-- `entities`: финальное состояние entity-массива с history
-- `activeEventSnapshot`: снимок primary event для run
+- `entities`: финальные entity snapshots с history
+- `activeEventSnapshot`: primary event для run
+- `analysis`: опциональный analysis block, если включены feature flags
 
 Важно:
+
 - `latest simulation` означает последний успешно завершённый run со статусом `completed`
 - `entities` могут быть усечены через `returnEntitiesLimit`
-- `summary` всегда считается по полному run, даже если `entities` усечены
+- `summary` всегда считается по полному run
+- `analysis` не подменяет `summary`, `steps` или `entities`, а только дополняет их
 
 ## API
 
 Доступные endpoints:
+
 - `GET /simulation/scenarios`
 - `GET /simulation/latest`
 - `GET /simulation/runs`
 - `GET /simulation/runs/:runId`
 - `POST /simulation/run`
 
-Основной запуск:
+Основной request:
+
 - `scenarioKey` обязателен
 - `entitiesCount`: `10..5000`
 - `steps`: `1..50`
 - `mode`: `baseline | fixed | adaptive | hybrid`
 - `profile`: `demo | realistic | stress`
-- `seed` опционален, но важен для воспроизводимости
-- `activeEventOverride` позволяет переопределить параметры primary event
+- `seed`: опционален, но важен для воспроизводимости
+- `activeEventOverride`: позволяет переопределить параметры primary event
+- `analysisOptions`: опционально включает analysis layers
 
 ## Режимы
 
-| Mode | Что делает | Decisions | Immediate effects | Отличие |
+| Mode | Семантика | Decisions | Immediate effects | Отличие |
 | --- | --- | --- | --- | --- |
-| `baseline` | Report-only режим | Да, decisions и system actions рассчитываются и попадают в telemetry | Нет | Показывает, что модель бы решила, но не применяет local/system effects и control-memory propagation |
-| `fixed` | Контрольная группа | Нет, local actions отключены, system action всегда `system_normal` | Нет | Пассивный control group с фиксированными thresholds |
-| `adaptive` | Активный рабочий режим | Да | Да | Thresholds и actions влияют на next-step dynamics через local/system effects и `stressMemory` |
-| `hybrid` | Adaptive + расширенная диагностика | Да | Да | По runtime semantics сейчас близок к `adaptive`, но дополнительно возвращает step-level `breakdown` по chaos sub-indexes |
+| `baseline` | Report-only mode | Да | Нет | Модель считает decisions и telemetry, но не применяет local/system effects |
+| `fixed` | Passive control group | Нет | Нет | Локальные и системные actions отключены, thresholds фиксированы |
+| `adaptive` | Active policy mode | Да | Да | Thresholds и actions влияют на next-step dynamics |
+| `hybrid` | Adaptive + expanded telemetry | Да | Да | Runtime semantics близка к `adaptive`, но добавляет `breakdown` по chaos sub-indexes |
 
 Текущая честная semantics:
-- `baseline` не равен `fixed`
-- `baseline` не пассивен по reporting-слою, но пассивен по effect-слою
-- `hybrid` сейчас не отдельная control logic ветка, а `adaptive` с более подробной telemetry
+
+- `fixed` — реальная passive control group
+- `baseline` — не равен `fixed`, а остаётся report-only mode
+- `adaptive` и `hybrid` — active decision modes
+- `hybrid` сейчас логически близок к `adaptive`, а не отдельная policy branch
 
 ## Profiles
 
-| Profile | Текущая семантика |
+| Profile | Текущая semantics |
 | --- | --- |
-| `demo` | Ближайший к базовому MVP профиль: без seeded noise, без event lifecycle и без delayed effects; наиболее консервативный по divergence |
-| `realistic` | Включает lifecycle event, delayed effects, inertia и умеренный stochastic noise; лучше показывает segment differentiation |
-| `stress` | Самый агрессивный профиль: сильнее event coupling, ниже барьер активации system layer и выше чувствительность для stress/regression прогонов |
+| `demo` | Ближайший к базовому MVP: без seeded noise, без delayed effects, наиболее консервативный по divergence |
+| `realistic` | Включает event lifecycle, delayed effects, inertia и умеренный stochastic noise |
+| `stress` | Самый агрессивный профиль: сильнее event coupling, ниже barrier для system layer, лучше для stress / regression прогонов |
 
 Практический смысл:
-- `demo` удобен для базовой контрольной проверки
+
+- `demo` удобен для базовой демонстрации
 - `realistic` ближе к правдоподобной динамике
-- `stress` нужен для доказуемых divergence/regression сценариев
+- `stress` нужен для доказуемых divergence / control-policy сценариев
 
 ## Ключевые метрики
 
 Независимые terminal outcomes:
+
 - `stabilizedCount`
 - `failedCount`
 
 Производные метрики:
+
 - `finishedEntities = stabilizedCount + failedCount`
 - `actionCount` — backward-compatible alias для `lastStepActionCount`
 
 Operational metrics:
-- `actionCountTotal`: все локальные actions за весь run, кроме `no_action`
+
+- `actionCountTotal`: все local actions за весь run, кроме `no_action`
 - `watchCountTotal`, `notifyCountTotal`, `dampenCountTotal`: breakdown по всему run
-- `avgTemperature`: средняя температура по всем entities в финальном состоянии
-- `avgInfluence`: средний influence по всем entities в финальном состоянии
-- `avgRiskScore`: средний risk score по всем entities в финальном состоянии
-- `avgFailureProbability`: средняя failure probability по всем entities в финальном состоянии
-- `finalChaosIndex`: chaos index последнего шага
-- `finalGlobalThreshold`: global threshold последнего шага
-- `finalSystemAction`: system action последнего шага
+- `avgTemperature`
+- `avgInfluence`
+- `avgRiskScore`
+- `avgFailureProbability`
+- `finalChaosIndex`
+- `finalGlobalThreshold`
+- `finalSystemAction`
 
 Hot-related metrics:
-- `hotEntities`: число hot entities в финальном состоянии
-- `hotEntitiesTotal`: число уникальных entities, которые хотя бы раз были hot
-- `hotActiveEntities`: число hot entities, которые в финале ещё не завершены
-- `maxHotEntities`: максимальное число hot entities одновременно на одном шаге
+
+- `hotEntities`: hot entities в финальном состоянии
+- `hotEntitiesTotal`: сколько уникальных entities были hot хотя бы раз
+- `hotActiveEntities`: сколько hot entities в финале ещё не завершены
+- `maxHotEntities`: пик hot entities на одном шаге
 
 ## Telemetry semantics
 
 `current` vs `residual`:
+
 - `avgCurrentInfluence`, `avgCurrentVelocity` считаются только по ещё активным entities
 - `avgResidualInfluence`, `avgResidualVelocity` считаются только по уже завершённым entities
-- после окончания active event именно current-метрики должны уходить к нулю, residual-метрики могут оставаться ненулевыми
+- после окончания active event именно current-метрики должны уходить к нулю
 
 `avgInfluence` и `avgVelocity`:
-- это агрегаты по всем entities, включая уже frozen terminal entities
+
+- это агрегаты по всем entities, включая frozen terminal entities
 
 `activeEvent` telemetry:
+
 - каждый step содержит `activeEventIntensity`
-- каждый step также содержит `eventSnapshot`
-- в `hybrid` режиме step дополнительно содержит `breakdown` по chaos sub-indexes
+- каждый step содержит `eventSnapshot`
+- `hybrid` дополнительно возвращает `breakdown` по chaos sub-indexes
 
 History semantics:
+
 - `steps` — system-level timeline
 - `entities[].history` — entity-level snapshots по шагам
 - history заполняется только пока entity активна
 
+## Analysis layers
+
+Все новые analysis-слои опциональны и включаются через `analysisOptions`. Если флагов нет, endpoint работает как раньше.
+
+### Causal layer
+
+`analysis.causal` — это simulation-interventional estimate, а не real-world causal claim.
+
+Phase 1 делает честный paired rerun подход:
+
+- одинаковый `seed`
+- одинаковый baseline run
+- меняется только одна интервенция
+
+Поддерживаемые интервенции первого этапа:
+
+- mode comparison `adaptive -> fixed`
+- local actions on/off
+- system actions on/off
+- event stronger / weaker
+- threshold sensitivity shift
+
+Что возвращается:
+
+- `targetMetric`
+- `comparisons[]`
+- `baselineValue`
+- `treatedValue`
+- `estimatedEffect`
+- `effectDirection`
+- `confidenceLabel`
+- `evidenceLabel`
+- `topDrivers`
+- `chaosDrivers`
+
+### Robust layer
+
+`analysis.robust` — scenario-based policy evaluator, а не полноценный solver.
+
+Layer сравнивает candidate policies:
+
+- `baseline`
+- `fixed`
+- `adaptive`
+- `hybrid`
+
+И гоняет их по deterministic scenario matrix с perturbations:
+
+- event intensity
+- event relevance / scope
+- noise pressure
+- reactive segment mix
+- stress-memory pressure
+- threshold sensitivity
+
+Что возвращается:
+
+- `objective`
+- `candidatePolicies`
+- `recommendedPolicy`
+- `scenarioCount`
+- `expectedScores`
+- `worstCaseScores`
+- `tailRiskScores`
+- `ranking`
+- `frontier`
+
+### Uncertainty layer
+
+`analysis.uncertainty` — practical uncertainty block для ключевых outputs.
+
+Phase 1 использует:
+
+- repeated seeded reruns
+- empirical interval aggregation
+- optional calibrated widening для finite-sample interval
+
+Это не "научная 95% истина", а честный simulation uncertainty estimate.
+
+Что возвращается:
+
+- `failureRate`
+- `chaosIndex`
+- `stabilizedCount`
+- `failedCount`
+- `avgRiskScore`
+- `recommendedPolicyScore`, если robust layer включён
+
+## analysisOptions
+
+Короткий пример:
+
+```json
+{
+  "scenarioKey": "global-chaos-mvp",
+  "entitiesCount": 100,
+  "steps": 8,
+  "mode": "adaptive",
+  "profile": "stress",
+  "seed": 123,
+  "analysisOptions": {
+    "causal": {
+      "enabled": true,
+      "targetMetric": "failureRate",
+      "maxInterventions": 6
+    },
+    "robust": {
+      "enabled": true,
+      "objective": "balanced_resilience",
+      "scenarioCount": 6
+    },
+    "uncertainty": {
+      "enabled": true,
+      "level": 0.95,
+      "method": "calibrated_empirical_interval",
+      "resamples": 8
+    }
+  }
+}
+```
+
+Упрощённые boolean flags тоже поддерживаются:
+
+```json
+{
+  "analysisOptions": {
+    "causal": true,
+    "robust": true,
+    "uncertainty": true
+  }
+}
+```
+
 ## QA layers
 
-В проекте сейчас три основных QA-слоя.
+В проекте сейчас четыре основных QA-слоя.
 
 `e2e layer`
+
 - проверяет HTTP contract
-- проверяет response shape и публичные endpoints
-- покрывает latest runs, run retrieval, terminal freeze и current/residual telemetry
+- проверяет response shape и backward compatibility
+- покрывает latest runs, terminal freeze, current/residual telemetry
+- проверяет optional `analysis` blocks
 
 `unit engine layer`
+
 - покрывает pure engines:
   - thresholds
   - actions
@@ -160,34 +319,49 @@ History semantics:
   - transitions
   - position math
   - scoring
-- проверяет deterministic math, bounds, fallback logic и controlled formulas
+  - causal
+  - robust
+  - uncertainty
 
 `regression / service layer`
+
 - проверяет orchestration через `SimulationService`
 - покрывает matrix по profiles / modes / seeds
 - проверяет determinism repeated runs
 - проверяет fixed control-group correctness
-- проверяет divergence между режимами
+- проверяет raw-run invariants при включённом analysis
+
+`invariants layer`
+
+- защищает bounded metrics
+- проверяет monotonic cumulative counters
+- проверяет terminal freeze semantics
+- проверяет ordered uncertainty intervals
 
 ## QA guarantees
 
 Что уже доказано текущим тестовым слоем:
-- одинаковый `seed` даёт воспроизводимый результат на repeated runs
-- `fixed` является пассивной control group
-- `adaptive` расходится с `fixed` под сильным stress не только по telemetry, но и по terminal outcomes
+
+- одинаковый `seed` даёт воспроизводимый результат
+- `fixed` остаётся passive control group
+- `baseline` остаётся report-only mode
+- `adaptive` расходится с `fixed` под сильным stress
 - `trajectory divergence` и `terminal divergence` тестируются отдельно
 - `summary`, `lastStep`, `steps` и `entities[].history` внутренне согласованы
 - bounded metrics не уходят в `NaN`, `Infinity` и недопустимые диапазоны
-- transition math, position math и scoring math покрыты отдельными unit tests
-- terminal states реально freeze semantics, а не только label в summary
+- `analysis` не меняет raw simulation result, если включён только как extension block
+- uncertainty intervals удовлетворяют `lower <= point <= upper`
+- causal / robust / uncertainty blocks остаются конечными и детерминированными
 
 ## Known limitations / current boundaries
 
 - README описывает текущее состояние кода, а не будущие идеи
-- `demo` профиль намеренно более консервативен; в нём trajectory divergence может появляться раньше, чем terminal divergence
-- `hybrid` сейчас по runtime semantics очень близок к `adaptive`; его главное отличие — расширенный telemetry `breakdown`
-- orchestration доказана сильным regression-слоем, но private internals `SimulationService` не разложены на полностью изолированные unit tests
-- persistence остаётся in-memory; это подходит для локального анализа и QA, но не является database-backed storage
+- causal layer в Phase 1 — это controlled simulation intervention, а не real-world causality
+- robust layer в Phase 1 — scenario-based evaluator, а не полноценный optimizer/solver
+- uncertainty layer в Phase 1 — empirical simulation interval, а не строгая внешняя статистическая гарантия
+- `demo` profile намеренно более консервативен; в нём trajectory divergence может появляться раньше terminal divergence
+- `hybrid` по runtime semantics остаётся близок к `adaptive`
+- persistence остаётся in-memory
 
 ## How to run
 
@@ -208,7 +382,7 @@ npm run start:dev
 ```bash
 npm run lint
 npm run build
-npm run test
+npm run test -- --runInBand
 npm run test:e2e -- --runInBand
 ```
 
@@ -221,19 +395,24 @@ curl -X POST http://localhost:3000/simulation/run \
 ```
 
 Что вернётся:
-- `runId`, `startedAt`, `finishedAt`, `status`
-- `summary` с итоговыми метриками по всему run
-- `lastStep` как финальный step snapshot
-- `steps` как timeline
-- `entities` как финальные entity snapshots с history
 
-Для короткой аналитики обычно достаточно смотреть:
+- `runId`, `startedAt`, `finishedAt`, `status`
+- `summary`
+- `lastStep`
+- `steps`
+- `entities`
+- `analysis`, если включены feature flags
+
+Для быстрого чтения обычно достаточно:
+
 - `summary.stabilizedCount`
 - `summary.failedCount`
 - `summary.finalChaosIndex`
 - `summary.finalGlobalThreshold`
 - `summary.finalSystemAction`
-- `lastStep.actionsBreakdown`
+- `analysis.causal.topDrivers`
+- `analysis.robust.recommendedPolicy`
+- `analysis.uncertainty.metrics.failureRate`
 
 ## Дополнительные заметки
 

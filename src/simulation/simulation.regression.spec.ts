@@ -1,10 +1,12 @@
 import { TestingModule, Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
+import { EmpiricalInterval } from './types/analysis.type';
 import {
   countNonNoAction,
   createStrongStressRunDto,
   expectFiniteInRange,
   normalizeSimulationResponse,
+  stripAnalysis,
   sumDistribution,
 } from '../testing/simulation-test.helper';
 import { SimulationService } from './simulation.service';
@@ -190,6 +192,59 @@ describe('Simulation regression', () => {
         expect(['stabilized', 'failed']).toContain(
           entity.history.at(-1)?.state,
         );
+      }
+    }
+  }
+
+  function assertAnalysisInvariants(response: SimulationResponse): void {
+    expect(response.analysis).toBeDefined();
+
+    if (!response.analysis) {
+      throw new Error('Analysis block was expected but is missing');
+    }
+
+    if (response.analysis.causal) {
+      expect(response.analysis.causal.enabled).toBe(true);
+      expect(response.analysis.causal.comparisons.length).toBeGreaterThan(0);
+
+      for (const comparison of response.analysis.causal.comparisons) {
+        expect(Number.isFinite(comparison.baselineValue)).toBe(true);
+        expect(Number.isFinite(comparison.treatedValue)).toBe(true);
+        expect(Number.isFinite(comparison.estimatedEffect)).toBe(true);
+      }
+    }
+
+    if (response.analysis.robust) {
+      expect(response.analysis.robust.enabled).toBe(true);
+      expect(response.analysis.robust.ranking.length).toBeGreaterThan(0);
+
+      for (const score of response.analysis.robust.ranking) {
+        expectFiniteInRange(score.expectedScore, 0, 1);
+        expectFiniteInRange(score.worstCaseScore, 0, 1);
+        expectFiniteInRange(score.tailRiskScore, 0, 1);
+        expectFiniteInRange(score.stabilityScore, 0, 1);
+        expectFiniteInRange(score.robustScore, 0, 1);
+        expectFiniteInRange(score.regret, 0, 1);
+        expectFiniteInRange(score.downside, 0, 1);
+      }
+    }
+
+    if (response.analysis.uncertainty) {
+      expect(response.analysis.uncertainty.enabled).toBe(true);
+      const intervals = Object.values(
+        response.analysis.uncertainty.metrics,
+      ) as Array<EmpiricalInterval | undefined>;
+
+      for (const interval of intervals) {
+        if (!interval) {
+          continue;
+        }
+
+        expect(Number.isFinite(interval.point)).toBe(true);
+        expect(Number.isFinite(interval.lower)).toBe(true);
+        expect(Number.isFinite(interval.upper)).toBe(true);
+        expect(interval.lower).toBeLessThanOrEqual(interval.point);
+        expect(interval.point).toBeLessThanOrEqual(interval.upper);
       }
     }
   }
@@ -390,6 +445,69 @@ describe('Simulation regression', () => {
     ).toBe(true);
     expect(normalizeAdaptiveHybridResponse(hybridResponse)).toEqual(
       normalizeAdaptiveHybridResponse(adaptiveResponse),
+    );
+  });
+
+  it('keeps raw simulation result unchanged when analysis layers are enabled', () => {
+    const baseDto = createStrongStressRunDto({
+      mode: 'adaptive',
+      steps: 6,
+      returnEntitiesLimit: 12,
+    });
+    const baselineResponse = service.runSimulation(baseDto);
+    const analyzedResponse = service.runSimulation({
+      ...baseDto,
+      analysisOptions: {
+        causal: true,
+        robust: true,
+        uncertainty: {
+          enabled: true,
+          resamples: 6,
+        },
+      },
+    });
+
+    assertCoreRunInvariants(baselineResponse);
+    assertCoreRunInvariants(analyzedResponse);
+    assertAnalysisInvariants(analyzedResponse);
+    expect(
+      normalizeSimulationResponse(stripAnalysis(analyzedResponse)),
+    ).toEqual(normalizeSimulationResponse(baselineResponse));
+  });
+
+  it('keeps analysis deterministic for repeated runs with the same seed', () => {
+    const dto = {
+      ...createStrongStressRunDto({
+        mode: 'adaptive',
+        steps: 6,
+        returnEntitiesLimit: 10,
+      }),
+      analysisOptions: {
+        causal: {
+          enabled: true,
+          targetMetric: 'failureRate',
+          maxInterventions: 4,
+        },
+        robust: {
+          enabled: true,
+          objective: 'balanced_resilience',
+          scenarioCount: 4,
+        },
+        uncertainty: {
+          enabled: true,
+          level: 0.95,
+          method: 'calibrated_empirical_interval',
+          resamples: 6,
+        },
+      },
+    };
+    const firstResponse = service.runSimulation(dto);
+    const secondResponse = service.runSimulation(dto);
+
+    assertAnalysisInvariants(firstResponse);
+    assertAnalysisInvariants(secondResponse);
+    expect(normalizeSimulationResponse(firstResponse)).toEqual(
+      normalizeSimulationResponse(secondResponse),
     );
   });
 });

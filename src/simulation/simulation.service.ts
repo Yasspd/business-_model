@@ -3,22 +3,36 @@ import { Injectable } from '@nestjs/common';
 import { LocalAction, Mode, SystemAction } from './types/action-mode.type';
 import { ListSimulationRunsDto } from './dto/list-simulation-runs.dto';
 import { ActionEngine } from '../engines/action.engine';
+import {
+  AnalysisBehaviorOverrides,
+  AnalysisExecutionRequest,
+  AnalysisRunExecutor,
+  RobustEvaluationResult,
+} from '../engines/analysis-engine.type';
+import { CausalEngine } from '../engines/causal.engine';
 import { clamp } from '../engines/math.util';
 import { MetricsEngine } from '../engines/metrics.engine';
 import { PositionEngine } from '../engines/position.engine';
 import { RandomEngine } from '../engines/random.engine';
+import { RobustEngine } from '../engines/robust.engine';
 import { ScoringEngine } from '../engines/scoring.engine';
 import { ThresholdEngine } from '../engines/threshold.engine';
 import { TransitionEngine } from '../engines/transition.engine';
+import { UncertaintyEngine } from '../engines/uncertainty.engine';
 import { ScenarioService } from '../scenario/scenario.service';
 import { SimulationRunStore } from './simulation-run.store';
 import { RunSimulationDto } from './dto/run-simulation.dto';
 import { Entity } from './types/entity.type';
 import { Event, EventSnapshot } from './types/event.type';
 import {
+  SimulationAnalysis,
+  SimulationAnalysisOptions,
+} from './types/analysis.type';
+import {
   EntitySegment,
   Scenario,
   SimulationProfile,
+  SimulationProfileKey,
   Transition,
 } from './types/scenario-config.type';
 import {
@@ -63,6 +77,7 @@ interface BuildResponseOptions {
   finishedAt: string;
   status: RunStatus;
   dto: RunSimulationDto;
+  mode: Mode;
   scenario: Scenario;
   profile: SimulationProfile;
   seed: number;
@@ -73,30 +88,84 @@ interface BuildResponseOptions {
   enforceInvariants: boolean;
 }
 
+interface SimulationBehaviorConfig {
+  useFixedThresholds: boolean;
+  localDecisionsEnabled: boolean;
+  localEffectsEnabled: boolean;
+  systemDecisionsEnabled: boolean;
+  systemEffectsEnabled: boolean;
+  localThresholdShift: number;
+  globalThresholdShift: number;
+}
+
+interface InternalSimulationExecutionOptions {
+  persistResult: boolean;
+  includeAnalysis: boolean;
+  modeOverride?: Mode;
+  profileOverride?: SimulationProfileKey;
+  behaviorOverrides?: AnalysisBehaviorOverrides;
+  scenarioMutator?: (scenario: Scenario, profile: SimulationProfile) => void;
+}
+
 @Injectable()
 export class SimulationService {
   private static readonly DEFAULT_SEED = 1337;
 
   constructor(
     private readonly actionEngine: ActionEngine,
+    private readonly causalEngine: CausalEngine,
     private readonly metricsEngine: MetricsEngine,
     private readonly positionEngine: PositionEngine,
+    private readonly robustEngine: RobustEngine,
     private readonly scenarioService: ScenarioService,
     private readonly scoringEngine: ScoringEngine,
     private readonly thresholdEngine: ThresholdEngine,
     private readonly transitionEngine: TransitionEngine,
+    private readonly uncertaintyEngine: UncertaintyEngine,
     private readonly runStore: SimulationRunStore,
   ) {}
 
   runSimulation(dto: RunSimulationDto): SimulationResponse {
+    return this.executeSimulation(dto, {
+      persistResult: true,
+      includeAnalysis: true,
+    });
+  }
+
+  getLatestRun(): SimulationResponse {
+    return this.runStore.getLatest();
+  }
+
+  getRunById(runId: string): SimulationResponse {
+    return this.runStore.getById(runId);
+  }
+
+  listRuns(query: ListSimulationRunsDto): SimulationRunListItem[] {
+    return this.runStore.list(query.limit ?? 10);
+  }
+
+  private executeSimulation(
+    dto: RunSimulationDto,
+    options: InternalSimulationExecutionOptions,
+  ): SimulationResponse {
     const scenario = this.scenarioService.getScenario(dto.scenarioKey);
-    const profile = scenario.profiles[dto.profile ?? scenario.defaultProfile];
+    const effectiveMode = options.modeOverride ?? dto.mode;
+    const profileKey =
+      options.profileOverride ?? dto.profile ?? scenario.defaultProfile;
+    const profile = scenario.profiles[profileKey];
+
+    options.scenarioMutator?.(scenario, profile);
+
     const transitionMatrixValidated =
       this.transitionEngine.validateTransitionMatrix(
         scenario.transitionMatrix,
         scenario.states,
       );
     const seed = dto.seed ?? SimulationService.DEFAULT_SEED;
+    const behavior = this.resolveBehaviorConfig(
+      effectiveMode,
+      options.behaviorOverrides,
+    );
     const randomEngine = new RandomEngine(seed);
     const runId = randomUUID();
     const startedAt = new Date().toISOString();
@@ -246,14 +315,18 @@ export class SimulationService {
         );
         const localThresholds = this.thresholdEngine.computeLocalThresholds(
           actionEligibleEntities,
-          dto.mode,
+          behavior.useFixedThresholds ? 'fixed' : effectiveMode,
           scenario.fixedThresholds,
           scenario.adaptiveThresholds,
         );
 
         for (const entity of activeEntities) {
           if (terminalEntityIds.has(entity.id)) {
-            entity.localThreshold = scenario.fixedThresholds.local;
+            entity.localThreshold = clamp(
+              scenario.fixedThresholds.local + behavior.localThresholdShift,
+              0.35,
+              0.95,
+            );
             entity.action = 'no_action';
             continue;
           }
@@ -266,17 +339,21 @@ export class SimulationService {
             );
           }
 
-          entity.localThreshold =
-            dto.mode === 'fixed'
-              ? scenario.fixedThresholds.local
-              : this.adjustLocalThreshold(
-                  localThresholds.get(entity.id) ??
-                    scenario.fixedThresholds.local,
-                  entity,
-                  profile,
-                );
+          entity.localThreshold = behavior.useFixedThresholds
+            ? clamp(
+                scenario.fixedThresholds.local + behavior.localThresholdShift,
+                0.35,
+                0.95,
+              )
+            : this.adjustLocalThreshold(
+                localThresholds.get(entity.id) ??
+                  scenario.fixedThresholds.local,
+                entity,
+                profile,
+              ) + behavior.localThresholdShift;
+          entity.localThreshold = clamp(entity.localThreshold, 0.35, 0.95);
 
-          if (dto.mode === 'fixed') {
+          if (!behavior.localDecisionsEnabled) {
             entity.action = 'no_action';
             continue;
           }
@@ -284,27 +361,29 @@ export class SimulationService {
           entity.action = this.resolveEntityAction(
             entity,
             runtimeState,
-            dto.mode,
+            effectiveMode,
             profile,
           );
 
-          this.actionEngine.applyLocalActionEffects(
-            entity,
-            dto.mode,
-            profile.delayedEffects.localImmediateShare,
-          );
-          this.scheduleLocalDelayedEffects(
-            entity,
-            runtimeState,
-            dto.mode,
-            profile,
-          );
-          this.applyLocalActionControlSignal(
-            entity.action,
-            runtimeState,
-            dto.mode,
-            profile,
-          );
+          if (behavior.localEffectsEnabled) {
+            this.actionEngine.applyLocalActionEffects(
+              entity,
+              'adaptive',
+              profile.delayedEffects.localImmediateShare,
+            );
+            this.scheduleLocalDelayedEffects(
+              entity,
+              runtimeState,
+              'adaptive',
+              profile,
+            );
+            this.applyLocalActionControlSignal(
+              entity.action,
+              runtimeState,
+              'adaptive',
+              profile,
+            );
+          }
 
           if (entity.action !== 'no_action') {
             runtimeState.cooldownRemaining = Math.max(
@@ -325,50 +404,59 @@ export class SimulationService {
           scenario.clusterRadius,
           profile.hotThresholds.system,
           scenario.chaosIndexWeights,
-          dto.mode === 'hybrid',
+          effectiveMode === 'hybrid',
         );
         const computedGlobalThreshold =
           this.thresholdEngine.computeGlobalThreshold(
             [...chaosHistory, observedMetrics.chaosIndex],
-            dto.mode,
+            behavior.useFixedThresholds ? 'fixed' : effectiveMode,
             scenario.fixedThresholds,
             scenario.adaptiveThresholds,
           );
-        const globalThreshold =
-          dto.mode === 'fixed'
-            ? computedGlobalThreshold
-            : this.adjustGlobalThreshold(computedGlobalThreshold, profile);
-        const systemAction =
-          dto.mode === 'fixed'
-            ? 'system_normal'
-            : this.actionEngine.decideSystemAction(
-                observedMetrics.chaosIndex,
-                globalThreshold,
-                profile.systemLayer.stabilizeThreshold,
-              );
+        const globalThreshold = behavior.useFixedThresholds
+          ? clamp(
+              computedGlobalThreshold + behavior.globalThresholdShift,
+              0.15,
+              0.95,
+            )
+          : clamp(
+              this.adjustGlobalThreshold(computedGlobalThreshold, profile) +
+                behavior.globalThresholdShift,
+              0.15,
+              0.95,
+            );
+        const systemAction = !behavior.systemDecisionsEnabled
+          ? 'system_normal'
+          : this.actionEngine.decideSystemAction(
+              observedMetrics.chaosIndex,
+              globalThreshold,
+              profile.systemLayer.stabilizeThreshold,
+            );
 
-        this.actionEngine.applySystemActionEffects(
-          systemAction,
-          dto.mode,
-          actionEligibleEntities,
-          activeEvent,
-          profile.delayedEffects.systemImmediateShare,
-        );
-        this.scheduleSystemDelayedEffects(
-          systemAction,
-          dto.mode,
-          actionEligibleEntities,
-          runtimeStates,
-          systemRuntimeState,
-          profile,
-        );
-        this.applySystemActionControlSignal(
-          systemAction,
-          actionEligibleEntities,
-          runtimeStates,
-          dto.mode,
-          profile,
-        );
+        if (behavior.systemEffectsEnabled) {
+          this.actionEngine.applySystemActionEffects(
+            systemAction,
+            'adaptive',
+            actionEligibleEntities,
+            activeEvent,
+            profile.delayedEffects.systemImmediateShare,
+          );
+          this.scheduleSystemDelayedEffects(
+            systemAction,
+            'adaptive',
+            actionEligibleEntities,
+            runtimeStates,
+            systemRuntimeState,
+            profile,
+          );
+          this.applySystemActionControlSignal(
+            systemAction,
+            actionEligibleEntities,
+            runtimeStates,
+            'adaptive',
+            profile,
+          );
+        }
 
         this.refreshEntityRiskScores(activeEntities, scenario);
 
@@ -379,7 +467,7 @@ export class SimulationService {
           scenario.clusterRadius,
           profile.hotThresholds.system,
           scenario.chaosIndexWeights,
-          dto.mode === 'hybrid',
+          effectiveMode === 'hybrid',
         );
 
         for (const entity of terminalEntities) {
@@ -452,6 +540,7 @@ export class SimulationService {
         finishedAt: new Date().toISOString(),
         status: 'completed',
         dto,
+        mode: effectiveMode,
         scenario,
         profile,
         seed,
@@ -462,7 +551,16 @@ export class SimulationService {
         enforceInvariants: true,
       });
 
-      return this.runStore.save(response);
+      const responseWithAnalysis =
+        options.includeAnalysis && options.persistResult
+          ? this.attachAnalysis(response, dto)
+          : response;
+
+      if (options.persistResult) {
+        return this.runStore.save(responseWithAnalysis);
+      }
+
+      return responseWithAnalysis;
     } catch (error) {
       const response = this.buildResponse({
         runId,
@@ -470,6 +568,7 @@ export class SimulationService {
         finishedAt: new Date().toISOString(),
         status: executionState.stepItems.length > 0 ? 'partial' : 'failed',
         dto,
+        mode: effectiveMode,
         scenario,
         profile,
         seed,
@@ -480,21 +579,171 @@ export class SimulationService {
         enforceInvariants: false,
       });
 
-      this.runStore.save(response);
+      if (options.persistResult) {
+        this.runStore.save(response);
+      }
+
       throw error;
     }
   }
 
-  getLatestRun(): SimulationResponse {
-    return this.runStore.getLatest();
+  private attachAnalysis(
+    response: SimulationResponse,
+    dto: RunSimulationDto,
+  ): SimulationResponse {
+    const analysisOptions = this.normalizeAnalysisOptions(dto);
+
+    if (!analysisOptions) {
+      return response;
+    }
+
+    const execute = this.createAnalysisExecutor();
+    const analysis: SimulationAnalysis = {};
+    let robustEvaluation: RobustEvaluationResult | undefined;
+
+    if (analysisOptions.causal?.enabled) {
+      analysis.causal = this.causalEngine.analyze(
+        response,
+        dto,
+        analysisOptions.causal,
+        execute,
+      );
+    }
+
+    if (analysisOptions.robust?.enabled) {
+      robustEvaluation = this.robustEngine.evaluate(
+        dto,
+        analysisOptions.robust,
+        execute,
+      );
+      analysis.robust = robustEvaluation.analysis;
+    }
+
+    if (analysisOptions.uncertainty?.enabled) {
+      analysis.uncertainty = this.uncertaintyEngine.quantify(
+        response,
+        dto,
+        analysisOptions.uncertainty,
+        execute,
+        robustEvaluation,
+      );
+    }
+
+    if (
+      analysis.causal === undefined &&
+      analysis.robust === undefined &&
+      analysis.uncertainty === undefined
+    ) {
+      return response;
+    }
+
+    return {
+      ...response,
+      analysis,
+    };
   }
 
-  getRunById(runId: string): SimulationResponse {
-    return this.runStore.getById(runId);
+  private normalizeAnalysisOptions(
+    dto: RunSimulationDto,
+  ): SimulationAnalysisOptions | null {
+    const causalOption = dto.analysisOptions?.causal;
+    const robustOption = dto.analysisOptions?.robust;
+    const uncertaintyOption = dto.analysisOptions?.uncertainty;
+    const normalized: SimulationAnalysisOptions = {};
+
+    if (causalOption && causalOption.enabled !== false) {
+      normalized.causal = {
+        enabled: true,
+        targetMetric: causalOption.targetMetric ?? 'failureRate',
+        maxInterventions: causalOption.maxInterventions ?? 6,
+      };
+    }
+
+    if (robustOption && robustOption.enabled !== false) {
+      normalized.robust = {
+        enabled: true,
+        objective: robustOption.objective ?? 'balanced_resilience',
+        scenarioCount: robustOption.scenarioCount ?? 6,
+      };
+    }
+
+    if (uncertaintyOption && uncertaintyOption.enabled !== false) {
+      normalized.uncertainty = {
+        enabled: true,
+        level: uncertaintyOption.level ?? 0.95,
+        method: uncertaintyOption.method ?? 'calibrated_empirical_interval',
+        resamples: uncertaintyOption.resamples ?? 8,
+      };
+    }
+
+    return normalized.causal || normalized.robust || normalized.uncertainty
+      ? normalized
+      : null;
   }
 
-  listRuns(query: ListSimulationRunsDto): SimulationRunListItem[] {
-    return this.runStore.list(query.limit ?? 10);
+  private createAnalysisExecutor(): AnalysisRunExecutor {
+    return (request: AnalysisExecutionRequest) =>
+      this.executeSimulation(request.dto, {
+        persistResult: false,
+        includeAnalysis: false,
+        modeOverride: request.modeOverride,
+        profileOverride: request.profileOverride,
+        behaviorOverrides: request.behaviorOverrides,
+        scenarioMutator: request.scenarioMutator,
+      });
+  }
+
+  private resolveBehaviorConfig(
+    mode: Mode,
+    overrides?: AnalysisBehaviorOverrides,
+  ): SimulationBehaviorConfig {
+    const baseConfig: SimulationBehaviorConfig =
+      mode === 'fixed'
+        ? {
+            useFixedThresholds: true,
+            localDecisionsEnabled: false,
+            localEffectsEnabled: false,
+            systemDecisionsEnabled: false,
+            systemEffectsEnabled: false,
+            localThresholdShift: 0,
+            globalThresholdShift: 0,
+          }
+        : mode === 'baseline'
+          ? {
+              useFixedThresholds: false,
+              localDecisionsEnabled: true,
+              localEffectsEnabled: false,
+              systemDecisionsEnabled: true,
+              systemEffectsEnabled: false,
+              localThresholdShift: 0,
+              globalThresholdShift: 0,
+            }
+          : {
+              useFixedThresholds: false,
+              localDecisionsEnabled: true,
+              localEffectsEnabled: true,
+              systemDecisionsEnabled: true,
+              systemEffectsEnabled: true,
+              localThresholdShift: 0,
+              globalThresholdShift: 0,
+            };
+
+    const resolved: SimulationBehaviorConfig = {
+      ...baseConfig,
+      ...overrides,
+      localThresholdShift: overrides?.localThresholdShift ?? 0,
+      globalThresholdShift: overrides?.globalThresholdShift ?? 0,
+    };
+
+    if (!resolved.localDecisionsEnabled) {
+      resolved.localEffectsEnabled = false;
+    }
+
+    if (!resolved.systemDecisionsEnabled) {
+      resolved.systemEffectsEnabled = false;
+    }
+
+    return resolved;
   }
 
   private buildResponse(options: BuildResponseOptions): SimulationResponse {
@@ -534,7 +783,7 @@ export class SimulationService {
       finishedAt: options.finishedAt,
       status: options.status,
       scenarioKey: options.scenario.key,
-      mode: options.dto.mode,
+      mode: options.mode,
       profile: options.profile.key,
       seed: options.seed,
       entitiesCount: options.dto.entitiesCount,

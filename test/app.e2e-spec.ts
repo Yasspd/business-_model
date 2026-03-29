@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from './../src/app.module';
 import { DEFAULT_SCENARIO } from './../src/scenario/scenario.config';
+import type { EmpiricalInterval } from './../src/simulation/types/analysis.type';
 import type {
   SimulationResponse,
   SimulationRunListItem,
@@ -31,6 +32,18 @@ interface RunSimulationRequestPayload {
   seed?: number;
   activeEventOverride?: StrongEventOverride;
   returnEntitiesLimit?: number;
+  analysisOptions?: {
+    causal?: boolean | { enabled?: boolean; targetMetric?: string };
+    robust?: boolean | { enabled?: boolean; objective?: string };
+    uncertainty?:
+      | boolean
+      | {
+          enabled?: boolean;
+          level?: number;
+          method?: string;
+          resamples?: number;
+        };
+  };
 }
 
 const TERMINAL_STATES = new Set(['failed', 'stabilized']);
@@ -284,6 +297,49 @@ function assertCoreRunInvariants(body: SimulationResponse): void {
   }
 }
 
+function assertAnalysisBlocksAreFinite(body: SimulationResponse): void {
+  expect(body.analysis).toBeDefined();
+
+  if (!body.analysis) {
+    throw new Error('Expected analysis block in response');
+  }
+
+  if (body.analysis.causal) {
+    for (const comparison of body.analysis.causal.comparisons) {
+      expect(Number.isFinite(comparison.baselineValue)).toBe(true);
+      expect(Number.isFinite(comparison.treatedValue)).toBe(true);
+      expect(Number.isFinite(comparison.estimatedEffect)).toBe(true);
+    }
+  }
+
+  if (body.analysis.robust) {
+    for (const score of body.analysis.robust.ranking) {
+      expect(Number.isFinite(score.expectedScore)).toBe(true);
+      expect(Number.isFinite(score.worstCaseScore)).toBe(true);
+      expect(Number.isFinite(score.tailRiskScore)).toBe(true);
+      expect(Number.isFinite(score.robustScore)).toBe(true);
+    }
+  }
+
+  if (body.analysis.uncertainty) {
+    const intervals = Object.values(body.analysis.uncertainty.metrics) as Array<
+      EmpiricalInterval | undefined
+    >;
+
+    for (const interval of intervals) {
+      if (!interval) {
+        continue;
+      }
+
+      expect(Number.isFinite(interval.point)).toBe(true);
+      expect(Number.isFinite(interval.lower)).toBe(true);
+      expect(Number.isFinite(interval.upper)).toBe(true);
+      expect(interval.lower).toBeLessThanOrEqual(interval.point);
+      expect(interval.point).toBeLessThanOrEqual(interval.upper);
+    }
+  }
+}
+
 describe('Simulation controller (e2e)', () => {
   let app: INestApplication;
   let httpServer: Server;
@@ -345,6 +401,7 @@ describe('Simulation controller (e2e)', () => {
     expect(body.entities).toHaveLength(4);
     expect(body.configSnapshot.storeTimeline).toBe(true);
     expect(body.debug.transitionMatrixValidated).toBe(true);
+    expect(body.analysis).toBeUndefined();
     assertCoreRunInvariants(body);
   });
 
@@ -652,5 +709,56 @@ describe('Simulation controller (e2e)', () => {
         fixedBody.summary.stabilizedCount ||
         adaptiveBody.summary.failedCount !== fixedBody.summary.failedCount,
     ).toBe(true);
+  });
+
+  it('returns optional causal, robust, and uncertainty analysis without breaking the base contract', async () => {
+    const withoutAnalysis = await postSimulationRun(httpServer, {
+      scenarioKey: 'global-chaos-mvp',
+      entitiesCount: 50,
+      steps: 6,
+      mode: 'adaptive',
+      profile: 'stress',
+      seed: 123,
+      activeEventOverride: { ...STRONG_STRESS_OVERRIDE },
+      returnEntitiesLimit: 8,
+    });
+    const withAnalysis = await postSimulationRun(httpServer, {
+      scenarioKey: 'global-chaos-mvp',
+      entitiesCount: 50,
+      steps: 6,
+      mode: 'adaptive',
+      profile: 'stress',
+      seed: 123,
+      activeEventOverride: { ...STRONG_STRESS_OVERRIDE },
+      returnEntitiesLimit: 8,
+      analysisOptions: {
+        causal: {
+          enabled: true,
+          targetMetric: 'failureRate',
+        },
+        robust: {
+          enabled: true,
+          objective: 'balanced_resilience',
+        },
+        uncertainty: {
+          enabled: true,
+          level: 0.95,
+          method: 'calibrated_empirical_interval',
+          resamples: 6,
+        },
+      },
+    });
+
+    assertCoreRunInvariants(withoutAnalysis);
+    assertCoreRunInvariants(withAnalysis);
+    assertAnalysisBlocksAreFinite(withAnalysis);
+    expect(withoutAnalysis.analysis).toBeUndefined();
+    expect(withAnalysis.analysis?.causal).toBeDefined();
+    expect(withAnalysis.analysis?.robust).toBeDefined();
+    expect(withAnalysis.analysis?.uncertainty).toBeDefined();
+    expect(withAnalysis.summary).toEqual(withoutAnalysis.summary);
+    expect(withAnalysis.lastStep).toEqual(withoutAnalysis.lastStep);
+    expect(withAnalysis.steps).toEqual(withoutAnalysis.steps);
+    expect(withAnalysis.entities).toEqual(withoutAnalysis.entities);
   });
 });

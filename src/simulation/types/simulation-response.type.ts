@@ -1,4 +1,5 @@
 import { Mode, SystemAction } from './action-mode.type';
+import { SimulationAnalysis } from './analysis.type';
 import { Entity } from './entity.type';
 import { EventSnapshot } from './event.type';
 import { SimulationProfileKey } from './scenario-config.type';
@@ -126,6 +127,7 @@ export interface SimulationResponse {
   steps: SimulationStepItem[];
   entities: Entity[];
   debug: SimulationDebug;
+  analysis?: SimulationAnalysis;
 }
 
 export interface SimulationRunListItem {
