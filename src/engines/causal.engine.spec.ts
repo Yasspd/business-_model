@@ -135,6 +135,10 @@ describe('CausalEngine', () => {
       expect(Number.isFinite(comparison.baselineValue)).toBe(true);
       expect(Number.isFinite(comparison.treatedValue)).toBe(true);
       expect(Number.isFinite(comparison.estimatedEffect)).toBe(true);
+      expect(['small', 'moderate', 'large']).toContain(
+        comparison.effectStrengthLabel,
+      );
+      expect(['low', 'medium', 'high']).toContain(comparison.confidenceLabel);
       expect(comparison.caveats.length).toBeGreaterThan(0);
     }
   });

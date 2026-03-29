@@ -154,6 +154,16 @@ function normalizeSimulationResponse(
   return stablePayload;
 }
 
+function stripAnalysisResponse(
+  response: Omit<SimulationResponse, 'finishedAt' | 'runId' | 'startedAt'>,
+) {
+  const normalized = structuredClone(response);
+
+  Reflect.deleteProperty(normalized, 'analysis');
+
+  return normalized;
+}
+
 function sumDistribution(distribution: Record<string, number>): number {
   return Object.values(distribution).reduce((sum, value) => sum + value, 0);
 }
@@ -309,6 +319,9 @@ function assertAnalysisBlocksAreFinite(body: SimulationResponse): void {
       expect(Number.isFinite(comparison.baselineValue)).toBe(true);
       expect(Number.isFinite(comparison.treatedValue)).toBe(true);
       expect(Number.isFinite(comparison.estimatedEffect)).toBe(true);
+      expect(['small', 'moderate', 'large']).toContain(
+        comparison.effectStrengthLabel,
+      );
     }
   }
 
@@ -317,7 +330,10 @@ function assertAnalysisBlocksAreFinite(body: SimulationResponse): void {
       expect(Number.isFinite(score.expectedScore)).toBe(true);
       expect(Number.isFinite(score.worstCaseScore)).toBe(true);
       expect(Number.isFinite(score.tailRiskScore)).toBe(true);
+      expect(Number.isFinite(score.stabilityScore)).toBe(true);
       expect(Number.isFinite(score.robustScore)).toBe(true);
+      expect(Number.isFinite(score.scoreGapFromBest)).toBe(true);
+      expect(score.explanation.strongestFactors.length).toBeGreaterThan(0);
     }
   }
 
@@ -337,6 +353,8 @@ function assertAnalysisBlocksAreFinite(body: SimulationResponse): void {
       expect(interval.lower).toBeLessThanOrEqual(interval.point);
       expect(interval.point).toBeLessThanOrEqual(interval.upper);
     }
+
+    expect(body.analysis.uncertainty.notes.length).toBeGreaterThan(0);
   }
 }
 
@@ -756,9 +774,62 @@ describe('Simulation controller (e2e)', () => {
     expect(withAnalysis.analysis?.causal).toBeDefined();
     expect(withAnalysis.analysis?.robust).toBeDefined();
     expect(withAnalysis.analysis?.uncertainty).toBeDefined();
-    expect(withAnalysis.summary).toEqual(withoutAnalysis.summary);
-    expect(withAnalysis.lastStep).toEqual(withoutAnalysis.lastStep);
-    expect(withAnalysis.steps).toEqual(withoutAnalysis.steps);
-    expect(withAnalysis.entities).toEqual(withoutAnalysis.entities);
+    expect(
+      stripAnalysisResponse(normalizeSimulationResponse(withAnalysis)),
+    ).toEqual(normalizeSimulationResponse(withoutAnalysis));
+  });
+
+  it('keeps analysis deterministic and keeps internal analysis reruns out of public run history', async () => {
+    const analysisPayload: RunSimulationRequestPayload = {
+      ...createStrongStressPayload('adaptive', 123),
+      entitiesCount: 40,
+      steps: 6,
+      returnEntitiesLimit: 8,
+      analysisOptions: {
+        causal: {
+          enabled: true,
+          targetMetric: 'failureRate',
+        },
+        robust: {
+          enabled: true,
+          objective: 'balanced_resilience',
+          scenarioCount: 6,
+        },
+        uncertainty: {
+          enabled: true,
+          level: 0.95,
+          method: 'calibrated_empirical_interval',
+          resamples: 6,
+        },
+      },
+    };
+    const firstRun = await postSimulationRun(httpServer, analysisPayload);
+    const secondRun = await postSimulationRun(httpServer, analysisPayload);
+    const latestResponse = await request(httpServer)
+      .get('/simulation/latest')
+      .expect(200);
+    const runsResponse = await request(httpServer)
+      .get('/simulation/runs?limit=10')
+      .expect(200);
+    const latestBody: unknown = latestResponse.body;
+    const runsBody: unknown = runsResponse.body;
+
+    expect(normalizeSimulationResponse(firstRun)).toEqual(
+      normalizeSimulationResponse(secondRun),
+    );
+    expect(isSimulationResponse(latestBody)).toBe(true);
+    expect(Array.isArray(runsBody)).toBe(true);
+
+    if (!isSimulationResponse(latestBody) || !Array.isArray(runsBody)) {
+      throw new Error('Analysis history endpoints returned invalid payload');
+    }
+
+    expect(latestBody.runId).toBe(secondRun.runId);
+    expect(runsBody).toHaveLength(2);
+    expect(
+      runsBody.every(
+        (run) => isSimulationRunListItem(run) && run.status === 'completed',
+      ),
+    ).toBe(true);
   });
 });

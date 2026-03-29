@@ -1,6 +1,6 @@
 # Business Model Simulation Engine
 
-NestJS + TypeScript backend для simulation / decision engine. Проект моделирует динамику generic `Entity`-сущностей в 2D-пространстве, совмещая:
+NestJS + TypeScript backend для simulation / decision-analysis engine. Проект моделирует динамику generic `Entity`-сущностей в 2D-пространстве и объединяет:
 
 - Markov state transitions
 - event-driven spatial movement
@@ -14,14 +14,14 @@ NestJS + TypeScript backend для simulation / decision engine. Проект м
 
 Ключевые доменные объекты:
 
-- `Entity`: активная сущность с состоянием, координатами, temperature, influence, velocity, risk score и history
+- `Entity`: сущность со state, координатами, temperature, influence, velocity, risk score и history
 - `Event`: внешний драйвер системы, влияющий на movement и influence
 - `Run`: один завершённый simulation run с `runId`, `summary`, `lastStep`, `steps`, `entities`
 - `Step`: telemetry snapshot одного шага
 - `Summary`: агрегаты по всему run
-- `Analysis`: опциональный extension block поверх готового run, который не меняет raw simulation result
+- `Analysis`: optional extension block поверх готового run, который не меняет raw simulation result
 
-Состояния в текущем MVP:
+Состояния текущего MVP:
 
 - `calm`
 - `interested`
@@ -42,16 +42,16 @@ Terminal states по текущей semantics:
 - не получает новые local actions
 - не растит history на следующих шагах
 
-## Runs, Steps и Telemetry
+## Runs, steps и telemetry
 
 API возвращает несколько уровней данных:
 
 - `summary`: итог по всему run
 - `lastStep`: snapshot только последнего шага
-- `steps`: timeline step-by-step telemetry
+- `steps`: step-by-step telemetry
 - `entities`: финальные entity snapshots с history
 - `activeEventSnapshot`: primary event для run
-- `analysis`: опциональный analysis block, если включены feature flags
+- `analysis`: optional analysis block, если включены feature flags
 
 Важно:
 
@@ -59,6 +59,7 @@ API возвращает несколько уровней данных:
 - `entities` могут быть усечены через `returnEntitiesLimit`
 - `summary` всегда считается по полному run
 - `analysis` не подменяет `summary`, `steps` или `entities`, а только дополняет их
+- internal analysis reruns не попадают в public store, `latest` и `runs history`
 
 ## API
 
@@ -86,22 +87,22 @@ API возвращает несколько уровней данных:
 | Mode | Семантика | Decisions | Immediate effects | Отличие |
 | --- | --- | --- | --- | --- |
 | `baseline` | Report-only mode | Да | Нет | Модель считает decisions и telemetry, но не применяет local/system effects |
-| `fixed` | Passive control group | Нет | Нет | Локальные и системные actions отключены, thresholds фиксированы |
+| `fixed` | Passive control group | Нет | Нет | Local/system actions отключены, thresholds фиксированы |
 | `adaptive` | Active policy mode | Да | Да | Thresholds и actions влияют на next-step dynamics |
 | `hybrid` | Adaptive + expanded telemetry | Да | Да | Runtime semantics близка к `adaptive`, но добавляет `breakdown` по chaos sub-indexes |
 
-Текущая честная semantics:
+Честная текущая semantics:
 
 - `fixed` — реальная passive control group
 - `baseline` — не равен `fixed`, а остаётся report-only mode
 - `adaptive` и `hybrid` — active decision modes
-- `hybrid` сейчас логически близок к `adaptive`, а не отдельная policy branch
+- `hybrid` по runtime semantics близок к `adaptive`, а не является отдельной policy branch
 
 ## Profiles
 
 | Profile | Текущая semantics |
 | --- | --- |
-| `demo` | Ближайший к базовому MVP: без seeded noise, без delayed effects, наиболее консервативный по divergence |
+| `demo` | Ближайший к базовому MVP: без сильного seeded noise и тяжёлых delayed effects |
 | `realistic` | Включает event lifecycle, delayed effects, inertia и умеренный stochastic noise |
 | `stress` | Самый агрессивный профиль: сильнее event coupling, ниже barrier для system layer, лучше для stress / regression прогонов |
 
@@ -109,7 +110,7 @@ API возвращает несколько уровней данных:
 
 - `demo` удобен для базовой демонстрации
 - `realistic` ближе к правдоподобной динамике
-- `stress` нужен для доказуемых divergence / control-policy сценариев
+- `stress` нужен для доказываемых divergence / control-policy сценариев
 
 ## Ключевые метрики
 
@@ -168,13 +169,13 @@ History semantics:
 
 ## Analysis layers
 
-Все новые analysis-слои опциональны и включаются через `analysisOptions`. Если флагов нет, endpoint работает как раньше.
+Все analysis-слои опциональны и включаются через `analysisOptions`. Если flags не переданы, endpoint работает как раньше.
 
 ### Causal layer
 
-`analysis.causal` — это simulation-interventional estimate, а не real-world causal claim.
+`analysis.causal` — это `simulation_interventional_estimate`, а не real-world causal claim.
 
-Phase 1 делает честный paired rerun подход:
+Phase 1 делает controlled paired rerun сравнения:
 
 - одинаковый `seed`
 - одинаковый baseline run
@@ -196,14 +197,15 @@ Phase 1 делает честный paired rerun подход:
 - `treatedValue`
 - `estimatedEffect`
 - `effectDirection`
-- `confidenceLabel`
+- `effectStrengthLabel`
+- `confidenceLabel` как backward-compatible alias
 - `evidenceLabel`
 - `topDrivers`
 - `chaosDrivers`
 
 ### Robust layer
 
-`analysis.robust` — scenario-based policy evaluator, а не полноценный solver.
+`analysis.robust` — `scenario_based_policy_evaluator`, а не полноценный solver.
 
 Layer сравнивает candidate policies:
 
@@ -232,6 +234,13 @@ Layer сравнивает candidate policies:
 - `tailRiskScores`
 - `ranking`
 - `frontier`
+- `explanation`
+
+Текущая semantics robust score:
+
+- `robustScore` строится из expected, worst-case и tail-risk компонентов
+- `stabilityScore` остаётся diagnostic-only и показывается для explainability, но не участвует в ranking formula
+- `regret` и `scoreGapFromBest` означают aggregate robust-score gap from best policy, а не классический scenario-wise regret
 
 ### Uncertainty layer
 
@@ -243,7 +252,7 @@ Phase 1 использует:
 - empirical interval aggregation
 - optional calibrated widening для finite-sample interval
 
-Это не "научная 95% истина", а честный simulation uncertainty estimate.
+Это не “реальная 95% статистическая истина”, а честный simulation uncertainty estimate.
 
 Что возвращается:
 
@@ -253,6 +262,12 @@ Phase 1 использует:
 - `failedCount`
 - `avgRiskScore`
 - `recommendedPolicyScore`, если robust layer включён
+
+Current wording:
+
+- `point` — reference point базового run
+- `interval` — seeded simulation spread вокруг repeated reruns
+- `calibrated empirical interval` — расширенный empirical band, а не strict real-world confidence guarantee
 
 ## analysisOptions
 
@@ -330,6 +345,7 @@ Phase 1 использует:
 - проверяет determinism repeated runs
 - проверяет fixed control-group correctness
 - проверяет raw-run invariants при включённом analysis
+- проверяет store isolation для internal analysis reruns
 
 `invariants layer`
 
@@ -350,13 +366,19 @@ Phase 1 использует:
 - `summary`, `lastStep`, `steps` и `entities[].history` внутренне согласованы
 - bounded metrics не уходят в `NaN`, `Infinity` и недопустимые диапазоны
 - `analysis` не меняет raw simulation result, если включён только как extension block
+- internal analysis reruns не попадают в public store, `latest` и `runs history`
 - uncertainty intervals удовлетворяют `lower <= point <= upper`
 - causal / robust / uncertainty blocks остаются конечными и детерминированными
+- robust ranking имеет deterministic tie-break:
+  - `robustScore desc`
+  - `worstCaseScore desc`
+  - `expectedScore desc`
+  - `policyId asc`
 
 ## Known limitations / current boundaries
 
 - README описывает текущее состояние кода, а не будущие идеи
-- causal layer в Phase 1 — это controlled simulation intervention, а не real-world causality
+- causal layer в Phase 1 — controlled simulation intervention, а не real-world causality
 - robust layer в Phase 1 — scenario-based evaluator, а не полноценный optimizer/solver
 - uncertainty layer в Phase 1 — empirical simulation interval, а не строгая внешняя статистическая гарантия
 - `demo` profile намеренно более консервативен; в нём trajectory divergence может появляться раньше terminal divergence

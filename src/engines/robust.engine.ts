@@ -4,6 +4,7 @@ import {
   RobustAnalysisOptions,
   RobustCandidatePolicy,
   RobustObjective,
+  RobustPolicyExplanation,
   RobustPolicyScore,
   RobustScenarioDescriptor,
 } from '../simulation/types/analysis.type';
@@ -22,6 +23,13 @@ interface RobustScenarioPlan {
     candidate: RobustCandidatePolicy,
   ) => AnalysisExecutionRequest;
 }
+
+const ROBUST_SCORE_WEIGHTS = {
+  expected: 0.45,
+  worstCase: 0.35,
+  tailRisk: 0.2,
+  stability: 0,
+} as const;
 
 @Injectable()
 export class RobustEngine {
@@ -58,16 +66,21 @@ export class RobustEngine {
       ...Array.from(policyScores.values()).map((score) => score.robustScore),
     );
     const ranking = Array.from(policyScores.values())
-      .map((score) => ({
-        ...score,
-        regret: clamp(bestRobustScore - score.robustScore, 0, 1),
-      }))
+      .map((score) => this.finalizePolicyScore(score, bestRobustScore))
       .sort((left, right) => {
         if (right.robustScore !== left.robustScore) {
           return right.robustScore - left.robustScore;
         }
 
-        return right.expectedScore - left.expectedScore;
+        if (right.worstCaseScore !== left.worstCaseScore) {
+          return right.worstCaseScore - left.worstCaseScore;
+        }
+
+        if (right.expectedScore !== left.expectedScore) {
+          return right.expectedScore - left.expectedScore;
+        }
+
+        return left.policyId.localeCompare(right.policyId);
       });
     const recommended = ranking[0] ?? null;
     const candidateLookup = new Map(
@@ -101,7 +114,9 @@ export class RobustEngine {
         ],
         notes: [
           'Сравниваются candidate policies baseline/fixed/adaptive/hybrid на одной и той же deterministic scenario matrix.',
-          'Recommended policy выбирается по robust score из expected, worst-case и tail-risk компонент.',
+          'Recommended policy выбирается по robust score из expected, worst-case и tail-risk компонентов.',
+          'stabilityScore в Phase 1 остаётся диагностической метрикой и показывается отдельно, но не участвует в ranking formula.',
+          'regret и scoreGapFromBest в Phase 1 означают aggregate robust-score gap from best policy, а не классический scenario-wise regret.',
         ],
       },
       scenarioScores,
@@ -196,7 +211,7 @@ export class RobustEngine {
           id: 'noise_pressure_high',
           label: 'Высокий шум',
           description:
-            'Усиливается stochastic noise в influence/temperature/transition.',
+            'Усиливается stochastic noise в influence, temperature и transition.',
         },
         buildRequest: (dto, candidate) => ({
           dto: {
@@ -229,7 +244,7 @@ export class RobustEngine {
           id: 'reactive_segment_mix',
           label: 'Смесь сегментов смещена к reactive',
           description:
-            'Доля reactive сегмента увеличивается за счёт stable/regular.',
+            'Доля reactive сегмента увеличивается за счёт stable и regular.',
         },
         buildRequest: (dto, candidate) => ({
           dto: {
@@ -280,7 +295,7 @@ export class RobustEngine {
           id: 'threshold_sensitivity_shift',
           label: 'Сдвиг чувствительности порогов',
           description:
-            'Adaptive thresholds и system threshold shift становятся более чувствительными.',
+            'Adaptive thresholds и system threshold становятся более чувствительными.',
         },
         buildRequest: (dto, candidate) => ({
           dto: {
@@ -321,8 +336,11 @@ export class RobustEngine {
     const tailRiskScore = mean(sortedScores.slice(0, tailCount));
     const worstCaseScore = sortedScores[0] ?? 0;
     const stabilityScore = clamp(1 - std(scores) / 0.25, 0, 1);
+    const downside = clamp(expectedScore - worstCaseScore, 0, 1);
     const robustScore = clamp(
-      expectedScore * 0.45 + worstCaseScore * 0.35 + tailRiskScore * 0.2,
+      expectedScore * ROBUST_SCORE_WEIGHTS.expected +
+        worstCaseScore * ROBUST_SCORE_WEIGHTS.worstCase +
+        tailRiskScore * ROBUST_SCORE_WEIGHTS.tailRisk,
       0,
       1,
     );
@@ -336,7 +354,77 @@ export class RobustEngine {
       stabilityScore,
       robustScore,
       regret: 0,
-      downside: clamp(expectedScore - worstCaseScore, 0, 1),
+      scoreGapFromBest: 0,
+      downside,
+      explanation: this.buildExplanation({
+        expectedScore,
+        worstCaseScore,
+        tailRiskScore,
+        stabilityScore,
+        downside,
+      }),
+    };
+  }
+
+  private finalizePolicyScore(
+    score: RobustPolicyScore,
+    bestRobustScore: number,
+  ): RobustPolicyScore {
+    const scoreGapFromBest = clamp(bestRobustScore - score.robustScore, 0, 1);
+
+    return {
+      ...score,
+      regret: scoreGapFromBest,
+      scoreGapFromBest,
+    };
+  }
+
+  private buildExplanation(score: {
+    expectedScore: number;
+    worstCaseScore: number;
+    tailRiskScore: number;
+    stabilityScore: number;
+    downside: number;
+  }): RobustPolicyExplanation {
+    const strongestFactors: string[] = [];
+
+    if (score.worstCaseScore >= 0.75) {
+      strongestFactors.push('лучше держится в худшем сценарии');
+    }
+
+    if (score.downside <= 0.12) {
+      strongestFactors.push(
+        'даёт меньшую просадку между средним и худшим исходом',
+      );
+    }
+
+    if (score.tailRiskScore >= 0.72) {
+      strongestFactors.push(
+        'лучше удерживает хвостовой риск под стрессовыми возмущениями',
+      );
+    }
+
+    if (score.stabilityScore >= 0.75) {
+      strongestFactors.push(
+        'диагностически показывает более ровный разброс между сценариями',
+      );
+    }
+
+    if (strongestFactors.length === 0) {
+      strongestFactors.push(
+        'выбор сделан по суммарному robust score без одного доминирующего фактора',
+      );
+    }
+
+    return {
+      strongestFactors: strongestFactors.slice(0, 3),
+      scoreFormula: {
+        expectedWeight: ROBUST_SCORE_WEIGHTS.expected,
+        worstCaseWeight: ROBUST_SCORE_WEIGHTS.worstCase,
+        tailRiskWeight: ROBUST_SCORE_WEIGHTS.tailRisk,
+        stabilityWeight: ROBUST_SCORE_WEIGHTS.stability,
+        note: 'stabilityScore остаётся diagnostic-only в Phase 1 и не участвует в ranking formula.',
+      },
     };
   }
 

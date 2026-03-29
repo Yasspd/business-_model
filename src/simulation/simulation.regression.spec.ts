@@ -211,6 +211,9 @@ describe('Simulation regression', () => {
         expect(Number.isFinite(comparison.baselineValue)).toBe(true);
         expect(Number.isFinite(comparison.treatedValue)).toBe(true);
         expect(Number.isFinite(comparison.estimatedEffect)).toBe(true);
+        expect(['small', 'moderate', 'large']).toContain(
+          comparison.effectStrengthLabel,
+        );
       }
     }
 
@@ -225,7 +228,10 @@ describe('Simulation regression', () => {
         expectFiniteInRange(score.stabilityScore, 0, 1);
         expectFiniteInRange(score.robustScore, 0, 1);
         expectFiniteInRange(score.regret, 0, 1);
+        expectFiniteInRange(score.scoreGapFromBest, 0, 1);
         expectFiniteInRange(score.downside, 0, 1);
+        expect(score.explanation.strongestFactors.length).toBeGreaterThan(0);
+        expect(score.explanation.scoreFormula.stabilityWeight).toBe(0);
       }
     }
 
@@ -246,6 +252,8 @@ describe('Simulation regression', () => {
         expect(interval.lower).toBeLessThanOrEqual(interval.point);
         expect(interval.point).toBeLessThanOrEqual(interval.upper);
       }
+
+      expect(response.analysis.uncertainty.notes.length).toBeGreaterThan(0);
     }
   }
 
@@ -509,5 +517,47 @@ describe('Simulation regression', () => {
     expect(normalizeSimulationResponse(firstResponse)).toEqual(
       normalizeSimulationResponse(secondResponse),
     );
+  });
+
+  it('does not persist internal analysis reruns into latest or public run history', () => {
+    const before = service.runSimulation(
+      createStrongStressRunDto({
+        mode: 'adaptive',
+        steps: 5,
+        returnEntitiesLimit: 8,
+      }),
+    );
+    const beforeList = service.listRuns({ limit: 20 });
+
+    expect(beforeList).toHaveLength(1);
+    expect(beforeList[0].runId).toBe(before.runId);
+
+    const analyzed = service.runSimulation({
+      ...createStrongStressRunDto({
+        mode: 'adaptive',
+        steps: 5,
+        returnEntitiesLimit: 8,
+      }),
+      seed: 777,
+      analysisOptions: {
+        causal: true,
+        robust: {
+          enabled: true,
+          scenarioCount: 6,
+        },
+        uncertainty: {
+          enabled: true,
+          resamples: 8,
+        },
+      },
+    });
+    const afterList = service.listRuns({ limit: 20 });
+
+    expect(afterList).toHaveLength(2);
+    expect(afterList.map((run) => run.runId)).toEqual([
+      analyzed.runId,
+      before.runId,
+    ]);
+    expect(service.getLatestRun().runId).toBe(analyzed.runId);
   });
 });

@@ -65,7 +65,18 @@ describe('UncertaintyEngine', () => {
           stabilityScore: 0.88,
           robustScore: 0.79,
           regret: 0,
+          scoreGapFromBest: 0,
           downside: 0.07,
+          explanation: {
+            strongestFactors: ['устойчивее в стрессовых сценариях'],
+            scoreFormula: {
+              expectedWeight: 0.45,
+              worstCaseWeight: 0.35,
+              tailRiskWeight: 0.2,
+              stabilityWeight: 0,
+              note: 'stabilityScore diagnostic-only',
+            },
+          },
         },
         expectedScores: {},
         worstCaseScores: {},
@@ -113,6 +124,7 @@ describe('UncertaintyEngine', () => {
     }
 
     expect(analysis.calibrationInfo.effectiveSamples).toBe(6);
+    expect(analysis.notes.length).toBeGreaterThan(0);
     expect(analysis.caveats.length).toBeGreaterThan(0);
   });
 });

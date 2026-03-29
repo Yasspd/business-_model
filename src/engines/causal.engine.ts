@@ -9,6 +9,7 @@ import {
   CausalInterventionDescriptor,
   ConfidenceLabel,
   EffectDirection,
+  EffectStrengthLabel,
   EvidenceLabel,
 } from '../simulation/types/analysis.type';
 import { SimulationResponse } from '../simulation/types/simulation-response.type';
@@ -74,7 +75,8 @@ export class CausalEngine {
       ),
       notes: [
         'Оценка строится на paired rerun интервенциях с одинаковым seed и одинаковым стартовым состоянием.',
-        'Это simulation-interventional estimate, а не реальный causal claim по наблюдательным данным.',
+        'Это simulation-interventional estimate внутри модели, а не real-world causal claim по наблюдательным данным.',
+        'confidenceLabel оставлен как backward-compatible alias. Для UI и документации используйте effectStrengthLabel.',
       ],
       caveats: [
         'Phase 1 использует одиночные контролируемые интервенции без полноценного SCM/DAG слоя.',
@@ -97,6 +99,7 @@ export class CausalEngine {
     const chaosEffect =
       this.extractMetric(treatedResponse, 'finalChaosIndex') -
       baselineChaosValue;
+    const effectStrengthLabel = this.getEffectStrengthLabel(estimatedEffect);
 
     return {
       comparison: {
@@ -106,7 +109,8 @@ export class CausalEngine {
         treatedValue,
         estimatedEffect,
         effectDirection: this.getEffectDirection(estimatedEffect),
-        confidenceLabel: this.getConfidenceLabel(estimatedEffect),
+        effectStrengthLabel,
+        confidenceLabel: this.getConfidenceLabel(effectStrengthLabel),
         evidenceLabel: this.getEvidenceLabel(estimatedEffect),
         caveats: [
           'Сравнение выполнено на одном и том же seed с изменением только одной интервенции.',
@@ -133,10 +137,16 @@ export class CausalEngine {
             ? comparison.effectDirection
             : this.getEffectDirection(chaosEffect),
       }))
-      .sort(
-        (left, right) =>
-          Math.abs(right.estimatedEffect) - Math.abs(left.estimatedEffect),
-      );
+      .sort((left, right) => {
+        const absoluteDifference =
+          Math.abs(right.estimatedEffect) - Math.abs(left.estimatedEffect);
+
+        if (absoluteDifference !== 0) {
+          return absoluteDifference;
+        }
+
+        return left.intervention.id.localeCompare(right.intervention.id);
+      });
 
     return ranked.map((item, index) => ({
       rank: index + 1,
@@ -339,14 +349,28 @@ export class CausalEngine {
     return 'no_change';
   }
 
-  private getConfidenceLabel(effect: number): ConfidenceLabel {
+  private getEffectStrengthLabel(effect: number): EffectStrengthLabel {
     const absoluteEffect = Math.abs(effect);
 
     if (absoluteEffect >= 0.1) {
-      return 'high';
+      return 'large';
     }
 
     if (absoluteEffect >= 0.03) {
+      return 'moderate';
+    }
+
+    return 'small';
+  }
+
+  private getConfidenceLabel(
+    effectStrengthLabel: EffectStrengthLabel,
+  ): ConfidenceLabel {
+    if (effectStrengthLabel === 'large') {
+      return 'high';
+    }
+
+    if (effectStrengthLabel === 'moderate') {
       return 'medium';
     }
 

@@ -132,6 +132,11 @@ export class UncertaintyEngine {
             : 'plain empirical quantile interval',
         wideningFactor,
       },
+      notes: [
+        'point — это опорная оценка базового run, а не внешняя статистическая истина.',
+        'interval — это seeded simulation spread по repeated reruns вокруг базового run.',
+        'calibrated empirical interval в Phase 1 означает расширенный empirical band, а не строгую real-world confidence guarantee.',
+      ],
       caveats: [
         'Интервалы отражают uncertainty внутри simulation engine, а не статистическую гарантию по реальному миру.',
         'Phase 1 использует repeated seeded reruns с empirical interval aggregation.',

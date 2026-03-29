@@ -26,6 +26,7 @@ export type RobustObjective = (typeof ROBUST_OBJECTIVES)[number];
 export type UncertaintyMethod = (typeof UNCERTAINTY_METHODS)[number];
 export type EffectDirection = 'increase' | 'decrease' | 'no_change';
 export type ConfidenceLabel = 'low' | 'medium' | 'high';
+export type EffectStrengthLabel = 'small' | 'moderate' | 'large';
 export type EvidenceLabel =
   | 'weak_single_seed_effect'
   | 'moderate_single_seed_effect'
@@ -69,6 +70,7 @@ export interface CausalComparison {
   treatedValue: number;
   estimatedEffect: number;
   effectDirection: EffectDirection;
+  effectStrengthLabel: EffectStrengthLabel;
   confidenceLabel: ConfidenceLabel;
   evidenceLabel: EvidenceLabel;
   caveats: string[];
@@ -116,11 +118,26 @@ export interface RobustPolicyScore {
   stabilityScore: number;
   robustScore: number;
   regret: number;
+  scoreGapFromBest: number;
   downside: number;
+  explanation: RobustPolicyExplanation;
 }
 
 export interface RobustRecommendedPolicy extends RobustPolicyScore {
   label: string;
+}
+
+export interface RobustScoreFormula {
+  expectedWeight: number;
+  worstCaseWeight: number;
+  tailRiskWeight: number;
+  stabilityWeight: number;
+  note: string;
+}
+
+export interface RobustPolicyExplanation {
+  strongestFactors: string[];
+  scoreFormula: RobustScoreFormula;
 }
 
 export interface RobustAnalysis {
@@ -171,6 +188,7 @@ export interface UncertaintyAnalysis {
   method: UncertaintyMethod;
   metrics: UncertaintyMetricMap;
   calibrationInfo: UncertaintyCalibrationInfo;
+  notes: string[];
   caveats: string[];
 }
 

@@ -4,6 +4,25 @@
 
 Последний успешно завершённый run со статусом `completed`, сохранённый в in-memory store.
 
+## Store isolation semantics
+
+Analysis-layer работает поверх уже построенного public run.
+
+Internal reruns, которые нужны для:
+
+- causal paired comparisons
+- robust scenario evaluation
+- uncertainty seeded reruns
+
+не должны:
+
+- попадать в `GET /simulation/latest`
+- попадать в `GET /simulation/runs`
+- создавать публичные run records
+- загрязнять `latest` или history
+
+Эта semantics защищена regression и e2e тестами.
+
 ## `fixed` vs `adaptive`
 
 `fixed`
@@ -21,7 +40,7 @@
 `baseline`
 
 - report-only mode
-- decisions и systemAction попадают в telemetry
+- decisions и `systemAction` попадают в telemetry
 - immediate effects и control signals не применяются
 
 `hybrid`
@@ -95,23 +114,47 @@ Hot metrics:
 
 Все analysis-слои опциональны и включаются через `analysisOptions`.
 
-`analysis.causal`
+### `analysis.causal`
 
-- simulation-interventional estimate
+- `simulation_interventional_estimate`
 - paired reruns с одинаковым seed
 - не является real-world causal claim
 
-`analysis.robust`
+Честная wording semantics:
 
-- scenario-based policy evaluator
+- `effectStrengthLabel` — основное поле для magnitude эффекта
+- `confidenceLabel` — backward-compatible alias на переходный этап
+- `evidenceLabel` — single-seed evidence descriptor внутри модели, а не внешняя статистическая гарантия
+
+### `analysis.robust`
+
+- `scenario_based_policy_evaluator`
 - сравнивает candidate policies на deterministic scenario matrix
 - не является полноценным solver
 
-`analysis.uncertainty`
+Explainability semantics:
+
+- `ranking[].explanation.strongestFactors` — краткие причины, почему policy выглядит лучше
+- `ranking[].explanation.scoreFormula` — прозрачные веса итогового robust score
+- `stabilityScore` остаётся diagnostic-only
+- `stabilityScore` показывается для explainability, но не участвует в ranking formula Phase 1
+
+Regret semantics:
+
+- `regret` и `scoreGapFromBest` означают aggregate robust-score gap from best policy
+- это не классический scenario-wise regret из decision theory
+
+### `analysis.uncertainty`
 
 - repeated seeded reruns
 - empirical interval aggregation
 - не является строгой внешней статистической гарантией
+
+Честная uncertainty wording:
+
+- `point` — reference point базового run
+- `interval` — seeded simulation spread вокруг repeated reruns
+- `calibrated empirical interval` — расширенный empirical band, а не strict real-world confidence guarantee
 
 ## Что гарантирует QA-слой
 
@@ -122,6 +165,7 @@ Hot metrics:
 - current vs residual telemetry semantics
 - согласованность `summary`, `lastStep`, `steps` и entity history
 - raw simulation result не меняется от включения `analysisOptions`
+- internal analysis reruns изолированы от public store
 
 ## Ограничения модели
 

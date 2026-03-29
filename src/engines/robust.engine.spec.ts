@@ -84,7 +84,54 @@ describe('RobustEngine', () => {
       expect(Number.isFinite(score.stabilityScore)).toBe(true);
       expect(Number.isFinite(score.robustScore)).toBe(true);
       expect(Number.isFinite(score.regret)).toBe(true);
+      expect(Number.isFinite(score.scoreGapFromBest)).toBe(true);
       expect(Number.isFinite(score.downside)).toBe(true);
+      expect(score.explanation.strongestFactors.length).toBeGreaterThan(0);
+      expect(score.explanation.scoreFormula.stabilityWeight).toBe(0);
     }
+  });
+
+  it('uses deterministic tie-breaks when robust scores are equal', () => {
+    const tiedExecutor: AnalysisRunExecutor = (
+      request: AnalysisExecutionRequest,
+    ) => {
+      const policyId = request.tag?.split(':')[1];
+
+      if (!policyId) {
+        throw new Error('Missing policy id in robust tag');
+      }
+
+      const scoreByPolicy: Record<string, number> = {
+        baseline: 0.2,
+        fixed: 0.2,
+        adaptive: 0.3,
+        hybrid: 0.4,
+      };
+      const failureRate = scoreByPolicy[policyId];
+
+      return createSimulationResponse({
+        mode: request.modeOverride ?? request.dto.mode,
+        summary: {
+          ...createSimulationResponse().summary,
+          failureRate,
+          conversionRate: 1 - failureRate,
+          finalChaosIndex: failureRate,
+          avgChaosIndex: failureRate,
+        },
+      });
+    };
+
+    const result = engine.evaluate(
+      createStrongStressRunDto(),
+      {
+        enabled: true,
+        objective: 'min_failure_rate',
+        scenarioCount: 3,
+      },
+      tiedExecutor,
+    );
+
+    expect(result.analysis.ranking[0].policyId).toBe('baseline');
+    expect(result.analysis.ranking[1].policyId).toBe('fixed');
   });
 });
